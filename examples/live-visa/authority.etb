@@ -1,0 +1,6 @@
+known_traveler(alice).
+
+authority says travel_authorized(Person) :-
+  payment says payment_cleared(Person),
+  visa says visa_approved(Person),
+  known_traveler(Person).

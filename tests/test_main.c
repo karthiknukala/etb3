@@ -113,6 +113,44 @@ static void test_capabilities(void) {
   etb_term_list_free(&args);
 }
 
+static void test_capability_rules(void) {
+  const char *source =
+      "capability concat/3 [path=\"" ETB_BUILD_DIR
+      "/sample_concat\", deterministic=true, proof_admissible=true, timeout_ms=1000].\n"
+      "capability receipt/2 [path=\"" ETB_BUILD_DIR
+      "/sample_receipt\", deterministic=true, proof_admissible=true, timeout_ms=1000].\n"
+      "prefix(\"withdrawal:\").\n"
+      "subject(\"alice\").\n"
+      "message(M) :- prefix(P), subject(S), concat(P, S, M).\n"
+      "receipted(M) :- message(M), receipt(M, \"ok\").\n";
+  char error[256];
+  etb_program program;
+  etb_engine engine;
+  etb_atom query;
+  etb_fact_list answers;
+
+  etb_program_init(&program);
+  etb_engine_init(&engine);
+  etb_atom_init(&query);
+  etb_fact_list_init(&answers);
+  memset(error, 0, sizeof(error));
+
+  expect_true(etb_parse_program_text(source, &program, error, sizeof(error)),
+              error);
+  expect_true(etb_engine_load_program(&engine, &program, error, sizeof(error)),
+              error);
+  expect_true(etb_engine_run_fixpoint(&engine, error, sizeof(error)), error);
+  expect_true(
+      etb_parse_atom_text("receipted(\"withdrawal:alice\")", &query, error,
+                          sizeof(error)),
+      error);
+  expect_true(etb_engine_query(&engine, &query, &answers, error, sizeof(error)),
+              error);
+  expect_true(answers.count == 1U, "receipted workflow should succeed");
+  (void)program;
+  (void)engine;
+}
+
 static void test_membership(void) {
   etb_membership membership;
   etb_peer_info peer = {.node_id = "n1",
@@ -178,6 +216,7 @@ static void test_certificate_build(void) {
 int main(void) {
   test_engine_core();
   test_capabilities();
+  test_capability_rules();
   test_membership();
   test_snapshot();
   test_certificate_build();

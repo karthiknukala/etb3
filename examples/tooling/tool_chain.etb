@@ -1,0 +1,8 @@
+capability concat/3 [path="./build/sample_concat", deterministic=true, proof_admissible=true, timeout_ms=1000].
+capability receipt/2 [path="./build/sample_receipt", deterministic=true, proof_admissible=true, timeout_ms=1000].
+
+prefix("withdrawal:").
+subject("alice").
+
+message(M) :- prefix(P), subject(S), concat(P, S, M).
+receipted(M) :- message(M), receipt(M, "ok").

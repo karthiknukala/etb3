@@ -121,49 +121,23 @@ bool etb_certificate_write_file(const etb_certificate *certificate,
   return true;
 }
 
-bool etb_certificate_read_file(const char *path, etb_certificate *certificate,
-                               char *error, size_t error_size) {
-  FILE *stream;
-  long size;
-  unsigned char *bytes = NULL;
+bool etb_certificate_read_bytes(const unsigned char *bytes, size_t size,
+                                etb_certificate *certificate, char *error,
+                                size_t error_size) {
   etb_cbor_cursor cursor;
   size_t pair_count;
   size_t index;
 
   etb_certificate_init(certificate);
-  stream = fopen(path, "rb");
-  if (stream == NULL) {
-    snprintf(error, error_size, "failed to open certificate");
-    return false;
-  }
-  if (fseek(stream, 0L, SEEK_END) != 0) {
-    fclose(stream);
-    snprintf(error, error_size, "failed to seek certificate");
-    return false;
-  }
-  size = ftell(stream);
-  if (size < 0) {
-    fclose(stream);
-    snprintf(error, error_size, "failed to read certificate size");
-    return false;
-  }
-  rewind(stream);
-  bytes = (unsigned char *)malloc((size_t)size);
-  if (bytes == NULL) {
-    fclose(stream);
+  certificate->cbor = (unsigned char *)malloc(size == 0U ? 1U : size);
+  if (size > 0U && certificate->cbor == NULL) {
     snprintf(error, error_size, "out of memory");
     return false;
   }
-  if (fread(bytes, 1U, (size_t)size, stream) != (size_t)size) {
-    fclose(stream);
-    free(bytes);
-    snprintf(error, error_size, "failed to read certificate");
-    return false;
+  if (size > 0U) {
+    memcpy(certificate->cbor, bytes, size);
   }
-  fclose(stream);
-
-  certificate->cbor = bytes;
-  certificate->cbor_size = (size_t)size;
+  certificate->cbor_size = size;
   etb_cbor_cursor_init(&cursor, certificate->cbor, certificate->cbor_size);
   if (!etb_cbor_read_map_header(&cursor, &pair_count)) {
     snprintf(error, error_size, "invalid certificate encoding");
@@ -248,4 +222,47 @@ bool etb_certificate_read_file(const char *path, etb_certificate *certificate,
     free(key);
   }
   return true;
+}
+
+bool etb_certificate_read_file(const char *path, etb_certificate *certificate,
+                               char *error, size_t error_size) {
+  FILE *stream;
+  long size;
+  unsigned char *bytes = NULL;
+  bool ok;
+  stream = fopen(path, "rb");
+  if (stream == NULL) {
+    snprintf(error, error_size, "failed to open certificate");
+    return false;
+  }
+  if (fseek(stream, 0L, SEEK_END) != 0) {
+    fclose(stream);
+    snprintf(error, error_size, "failed to seek certificate");
+    return false;
+  }
+  size = ftell(stream);
+  if (size < 0) {
+    fclose(stream);
+    snprintf(error, error_size, "failed to read certificate size");
+    return false;
+  }
+  rewind(stream);
+  bytes = (unsigned char *)malloc((size_t)size == 0U ? 1U : (size_t)size);
+  if (size > 0 && bytes == NULL) {
+    fclose(stream);
+    snprintf(error, error_size, "out of memory");
+    return false;
+  }
+  if (size > 0 &&
+      fread(bytes, 1U, (size_t)size, stream) != (size_t)size) {
+    fclose(stream);
+    free(bytes);
+    snprintf(error, error_size, "failed to read certificate");
+    return false;
+  }
+  fclose(stream);
+  ok = etb_certificate_read_bytes(bytes, (size_t)size, certificate, error,
+                                  error_size);
+  free(bytes);
+  return ok;
 }

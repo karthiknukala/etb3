@@ -34,7 +34,8 @@ int main(void) {
   unsigned char request[4096];
   size_t size = fread(request, 1U, sizeof(request), stdin);
   etb_cbor_cursor cursor;
-  etb_term arg;
+  etb_term input;
+  etb_term expected_status;
   size_t outer;
   size_t count;
   char digest[65];
@@ -43,21 +44,22 @@ int main(void) {
   etb_cbor_cursor_init(&cursor, request, size);
   if (!etb_cbor_read_array_header(&cursor, &outer) || outer != 2U ||
       !etb_cbor_read_array_header(&cursor, &count) || count != 2U ||
-      !read_term(&cursor, &arg) || !read_term(&cursor, &arg)) {
+      !read_term(&cursor, &input) || !read_term(&cursor, &expected_status)) {
     return 2;
   }
-  etb_sha256_hex((const unsigned char *)(arg.text == NULL ? "" : arg.text),
-                 arg.text == NULL ? 0U : strlen(arg.text), digest);
+  etb_sha256_hex((const unsigned char *)(input.text == NULL ? "" : input.text),
+                 input.text == NULL ? 0U : strlen(input.text), digest);
   etb_cbor_buffer_init(&out);
   etb_cbor_write_array_header(&out, 2U);
   etb_cbor_write_array_header(&out, 1U);
   etb_cbor_write_array_header(&out, 2U);
-  write_term(&out, &arg);
+  write_term(&out, &input);
   write_term(&out, &(etb_term){.kind = ETB_TERM_STRING, .text = "ok"});
   etb_cbor_write_array_header(&out, 1U);
   etb_cbor_write_text(&out, digest);
   fwrite(out.data, 1U, out.size, stdout);
   etb_cbor_buffer_free(&out);
-  etb_term_free(&arg);
+  etb_term_free(&input);
+  etb_term_free(&expected_status);
   return 0;
 }

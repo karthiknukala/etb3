@@ -25,6 +25,9 @@ bool etb_certificate_build(etb_certificate *certificate, const etb_atom *query,
 bool etb_certificate_write_file(const etb_certificate *certificate,
                                 const char *path, char *error,
                                 size_t error_size);
+bool etb_certificate_read_bytes(const unsigned char *bytes, size_t size,
+                                etb_certificate *certificate, char *error,
+                                size_t error_size);
 bool etb_certificate_read_file(const char *path, etb_certificate *certificate,
                                char *error, size_t error_size);
 

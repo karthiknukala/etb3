@@ -1,0 +1,3 @@
+alice speaks_for manager [scope=approve, expires=4102444800, depth=2].
+manager speaks_for bank [scope=approve, expires=4102444800, depth=2].
+alice says approve(loan42).

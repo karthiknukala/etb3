@@ -1,0 +1,5 @@
+permit(alice).
+permit(bob).
+blocked(bob).
+
+allowed(X) :- permit(X), not blocked(X).

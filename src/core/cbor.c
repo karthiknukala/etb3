@@ -263,6 +263,27 @@ bool etb_cbor_read_text(etb_cbor_cursor *cursor, char **value) {
   return true;
 }
 
+bool etb_cbor_read_bytes(etb_cbor_cursor *cursor, unsigned char **value,
+                         size_t *size_out) {
+  uint64_t size;
+  unsigned char *bytes;
+  if (!etb_cbor_read_type_value(cursor, 0x40U, &size) ||
+      cursor->offset + (size_t)size > cursor->size) {
+    return false;
+  }
+  bytes = (unsigned char *)malloc(size == 0U ? 1U : (size_t)size);
+  if (size > 0U && bytes == NULL) {
+    return false;
+  }
+  if (size > 0U) {
+    memcpy(bytes, cursor->data + cursor->offset, (size_t)size);
+  }
+  cursor->offset += (size_t)size;
+  *value = bytes;
+  *size_out = (size_t)size;
+  return true;
+}
+
 bool etb_cbor_read_array_header(etb_cbor_cursor *cursor, size_t *count) {
   uint64_t size;
   if (!etb_cbor_read_type_value(cursor, 0x80U, &size)) {

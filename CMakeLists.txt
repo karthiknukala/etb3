@@ -31,6 +31,7 @@ add_library(etb STATIC
   src/runtime/swim.c
   src/runtime/signer_soft.c
   src/runtime/signer_macos.c
+  src/runtime/distributed.c
   src/runtime/daemon.c
   src/net/frame.c
   src/net/rpc.c
@@ -55,6 +56,7 @@ target_include_directories(etbd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
 
 add_executable(etbctl src/cli/etbctl.c)
 target_link_libraries(etbctl PRIVATE etb)
+target_include_directories(etbctl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/core)
 
 add_executable(sample_concat
   adapters/samples/sample_concat.c

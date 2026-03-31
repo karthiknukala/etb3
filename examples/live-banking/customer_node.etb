@@ -1,0 +1,4 @@
+customer says withdrawal_request(tx1001,alice,50).
+
+cash_authorized(Tx, Customer, Amount) :-
+  teller says approved(Tx, Customer, Amount).

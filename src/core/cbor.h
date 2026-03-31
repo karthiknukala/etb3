@@ -36,6 +36,8 @@ bool etb_cbor_read_int(etb_cbor_cursor *cursor, int64_t *value);
 bool etb_cbor_read_bool(etb_cbor_cursor *cursor, bool *value);
 bool etb_cbor_read_null(etb_cbor_cursor *cursor);
 bool etb_cbor_read_text(etb_cbor_cursor *cursor, char **value);
+bool etb_cbor_read_bytes(etb_cbor_cursor *cursor, unsigned char **value,
+                         size_t *size_out);
 bool etb_cbor_read_array_header(etb_cbor_cursor *cursor, size_t *count);
 bool etb_cbor_read_map_header(etb_cbor_cursor *cursor, size_t *count);
 

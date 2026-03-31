@@ -1,0 +1,5 @@
+clearance(alice) @ 4102444800.
+badge_snapshot(alice) at 424242.
+
+usable_clearance(X) :- clearance(X) @ 4102444800.
+anchored_badge(X) :- badge_snapshot(X) at 424242.

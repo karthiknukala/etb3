@@ -1,0 +1,6 @@
+known_applicant(alice).
+
+visa_approved(Person) :-
+  applicant says passport_valid(Person),
+  applicant says sufficient_funds(Person),
+  known_applicant(Person).

@@ -134,8 +134,11 @@ static bool etb_try_capability(const etb_engine *engine, const etb_literal *lite
     const etb_term *bound =
         term->kind == ETB_TERM_VARIABLE ? etb_binding_set_get(&state->bindings, term->text)
                                         : NULL;
-    if (!etb_term_list_push(&args, bound == NULL ? etb_term_make_null()
-                                                 : etb_term_clone(bound))) {
+    etb_term arg =
+        bound != NULL ? etb_term_clone(bound)
+                      : term->kind == ETB_TERM_VARIABLE ? etb_term_make_null()
+                                                        : etb_term_clone(term);
+    if (!etb_term_list_push(&args, arg)) {
       snprintf(error, error_size, "out of memory");
       etb_term_list_free(&args);
       free(bound_mask);
