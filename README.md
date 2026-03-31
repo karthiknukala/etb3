@@ -11,6 +11,34 @@ Peer-to-peer Evidential Tool Bus prototype in C11 with:
 - snapshot/signer scaffolding
 - Rust proof sidecar
 
+## Architecture Docs
+
+Detailed architecture and communication diagrams live in:
+
+- [docs/README.md](/Users/e35480/projects/misc/ETB/etb3/docs/README.md)
+- [docs/architecture.md](/Users/e35480/projects/misc/ETB/etb3/docs/architecture.md)
+
+Top-level system view:
+
+```mermaid
+flowchart LR
+  User["Operator / etbctl"] --> Client["Live ETB node"]
+  Client --> Engine["Datalog engine<br/>says / speaks_for / negation"]
+  Engine --> Registry["Seed-discovered route cache"]
+  Engine --> Trace["Trace + certificate builder"]
+  Trace --> Prover["Rust proof sidecar"]
+  Engine --> Peer["Remote ETB peers"]
+  Peer --> Engine
+  Client --> Output[".cert.cbor / .proof / chain/"]
+```
+
+The full docs page adds a fuller component diagram plus sequence diagrams for:
+
+- seed discovery bootstrap
+- two-node banking
+- four-node visa coalescing
+- independent proof verification
+
 ## What Is Distributed Today
 
 The repo now has a live distributed mode built around long-running TCP nodes:
@@ -92,6 +120,12 @@ Run the banking integration script yourself:
 /bin/zsh tests/integration/two_node_banking.sh "$PWD" "$PWD/build"
 ```
 
+Add `--verbose` when you want the script to print each command it runs:
+
+```sh
+/bin/zsh tests/integration/two_node_banking.sh "$PWD" "$PWD/build" --verbose
+```
+
 Run the live discovery integrations yourself:
 
 ```sh
@@ -101,6 +135,9 @@ Run the live discovery integrations yourself:
 ```sh
 /bin/zsh tests/integration/live_seed_visa.sh "$PWD" "$PWD/build"
 ```
+
+The integration and demo shell scripts all support `--verbose` for command
+tracing and log-path output.
 
 The integration script assumes:
 

@@ -29,6 +29,12 @@ Run one integration script directly:
 /bin/zsh tests/integration/two_node_banking.sh "$PWD" "$PWD/build"
 ```
 
+Verbose mode:
+
+```sh
+/bin/zsh tests/integration/two_node_banking.sh "$PWD" "$PWD/build" --verbose
+```
+
 Run the live discovery integrations directly:
 
 ```sh
@@ -38,6 +44,9 @@ Run the live discovery integrations directly:
 ```sh
 /bin/zsh tests/integration/live_seed_visa.sh "$PWD" "$PWD/build"
 ```
+
+Each shell script also accepts `--verbose` to print commands, temp directories,
+and captured node logs on failure.
 
 ## Adding a C Test
 
@@ -63,7 +72,7 @@ Good fits for this layer:
 2. Follow the pattern in
    [`two_node_banking.sh`](/Users/e35480/projects/misc/ETB/etb3/tests/integration/two_node_banking.sh):
    accept `SOURCE_DIR` and `BUILD_DIR` as positional arguments, use `set -euo pipefail`,
-   and fail loudly on missing output.
+   support `--verbose`, and fail loudly on missing output.
 3. Register it in [`CMakeLists.txt`](/Users/e35480/projects/misc/ETB/etb3/CMakeLists.txt)
    with `add_test(...)`.
 4. Run it with `ctest --test-dir build -R <name> --output-on-failure`.

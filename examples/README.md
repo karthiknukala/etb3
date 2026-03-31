@@ -247,11 +247,18 @@ There is also a helper script:
 /bin/zsh examples/live-banking/run_demo.sh "$PWD" "$PWD/build"
 ```
 
+Verbose mode:
+
+```sh
+/bin/zsh examples/live-banking/run_demo.sh "$PWD" "$PWD/build" --verbose
+```
+
 Persist the generated proofs and certificates in a directory you choose:
 
 ```sh
 /bin/zsh examples/live-banking/run_demo.sh "$PWD" "$PWD/build" \
-  --out-dir "$PWD/demo-output/live-banking"
+  --out-dir "$PWD/demo-output/live-banking" \
+  --verbose
 ```
 
 That directory will contain:
@@ -340,11 +347,18 @@ There is also a helper script:
 /bin/zsh examples/live-visa/run_demo.sh "$PWD" "$PWD/build"
 ```
 
+Verbose mode:
+
+```sh
+/bin/zsh examples/live-visa/run_demo.sh "$PWD" "$PWD/build" --verbose
+```
+
 Persist the generated proofs and certificates in a directory you choose:
 
 ```sh
 /bin/zsh examples/live-visa/run_demo.sh "$PWD" "$PWD/build" \
-  --out-dir "$PWD/demo-output/live-visa"
+  --out-dir "$PWD/demo-output/live-visa" \
+  --verbose
 ```
 
 That directory will contain:
@@ -362,6 +376,8 @@ That directory will contain:
 - Live nodes now support seed-based route discovery with `--seed HOST:PORT`.
 - `--peer PRINCIPAL=HOST:PORT` still works as a manual override when you want
   to pin a route.
+- The helper scripts accept `--verbose` and will print launch/query commands
+  plus log locations.
 - They automatically verify incoming proof bundles before importing answers
   when you configure `--prover`.
 - The transport is still plain TCP in this prototype.
