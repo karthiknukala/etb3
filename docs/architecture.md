@@ -85,6 +85,8 @@ flowchart TD
   Resolve --> RPC["Fetch remote certificate bundle(s)<br/>from live peer"]
   RPC --> Verify["Verify imported bundle(s)<br/>before adding facts"]
   Verify --> Eval
+  Eval --> Temporal["Temporal checks<br/>@ t against local clock<br/>at T as exact anchor tag match"]
+  Temporal --> Cert
   Cert --> Proof["7. Generate proof file<br/>with Rust sidecar"]
   Proof --> Return["8. Return top-level cert/proof<br/>and optional chain directory"]
   Return --> Independent["9. Independent verification<br/>against saved cert/proof files"]
@@ -211,6 +213,43 @@ sequenceDiagram
 ```
 
 ## Reading The Diagrams
+
+## Temporal Operators Today
+
+The current fragment does include temporal syntax and partial temporal
+enforcement, but it is important to be precise about what is and is not
+attested yet.
+
+- `A @ t` is parsed and stored in the AST, and evaluation checks it against the
+  node's local wall clock.
+- `A at T` is parsed and stored in the AST, but today it behaves as an exact
+  annotation match against facts carrying the same `at T` tag.
+- Temporal annotations survive canonicalization, so they are part of the atom
+  text committed into trace digests, certificates, and the current proof input.
+- The current verifier therefore proves a certificate-bound relation over atoms
+  that include temporal annotations, but it does not independently validate the
+  truth of wall-clock time or blockchain inclusion.
+
+Concretely, the current implementation is:
+
+- `@ t`: local clock enforcement in
+  [eval.c](/Users/e35480/projects/misc/ETB/etb3/src/engine/eval.c)
+- `at T`: exact-match temporal tagging in
+  [eval.c](/Users/e35480/projects/misc/ETB/etb3/src/engine/eval.c)
+- temporal parsing in
+  [parser.c](/Users/e35480/projects/misc/ETB/etb3/src/core/parser.c)
+- temporal canonicalization in
+  [canon.c](/Users/e35480/projects/misc/ETB/etb3/src/core/canon.c)
+- trace commitment of canonical atoms in
+  [trace.c](/Users/e35480/projects/misc/ETB/etb3/src/engine/trace.c)
+
+What is not implemented yet:
+
+- signed time attestations
+- blockchain inclusion proofs for `at T`
+- an external consensus oracle for time/anchor truth
+- a proof relation that validates temporal truth, rather than only committing to
+  temporal annotations already present in the certificate
 
 - Discovery is currently seed-based and best-effort.
 - Route knowledge is carried by explicit announce/registry/resolve traffic.

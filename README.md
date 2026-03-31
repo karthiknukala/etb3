@@ -39,6 +39,16 @@ The full docs page adds a fuller component diagram plus sequence diagrams for:
 - four-node visa coalescing
 - independent proof verification
 
+Temporal semantics today:
+
+- `A @ t` is enforced against the local node clock
+- `A at T` is currently an exact-match temporal tag, not a verified chain anchor
+- temporal annotations are committed into certificates/traces/proofs, but their
+  truth is not independently attested yet
+
+The fuller explanation is in
+[docs/architecture.md](/Users/e35480/projects/misc/ETB/etb3/docs/architecture.md).
+
 ## What Is Distributed Today
 
 The repo now has a live distributed mode built around long-running TCP nodes:
