@@ -729,9 +729,15 @@ code {
 }
 
 .button-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.button-row > button {
+  width: 100%;
+  min-width: 0;
 }
 
 .empty-state,
@@ -962,7 +968,6 @@ code {
 
 @media (max-width: 640px) {
   .topbar-actions,
-  .button-row,
   .compact-row-head,
   .compact-actions,
   .section-heading-row {

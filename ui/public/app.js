@@ -1145,7 +1145,7 @@
                 disabled: controlBusy !== "" || !snapshot.lastQuery || !snapshot.lastQuery.success,
                 onClick: handleVerify
               },
-              controlBusy === "verify" ? "Checking..." : "Run Proof Checker"
+              controlBusy === "verify" ? "Checking..." : "Check Proof"
             ),
             h(
               "button",
