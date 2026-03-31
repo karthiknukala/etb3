@@ -244,6 +244,21 @@ There is also a helper script:
 /bin/zsh examples/live-banking/run_demo.sh "$PWD" "$PWD/build"
 ```
 
+Persist the generated proofs and certificates in a directory you choose:
+
+```sh
+/bin/zsh examples/live-banking/run_demo.sh "$PWD" "$PWD/build" \
+  --out-dir "$PWD/demo-output/live-banking"
+```
+
+That directory will contain:
+
+- `customer-top.cert.cbor`
+- `customer-top.proof`
+- `chain/`
+- `customer.log`
+- `teller.log`
+
 ## 8. Live Four-Node Visa Chain
 
 Files:
@@ -319,6 +334,23 @@ There is also a helper script:
 ```sh
 /bin/zsh examples/live-visa/run_demo.sh "$PWD" "$PWD/build"
 ```
+
+Persist the generated proofs and certificates in a directory you choose:
+
+```sh
+/bin/zsh examples/live-visa/run_demo.sh "$PWD" "$PWD/build" \
+  --out-dir "$PWD/demo-output/live-visa"
+```
+
+That directory will contain:
+
+- `client-top.cert.cbor`
+- `client-top.proof`
+- `chain/`
+- `client.log`
+- `authority.log`
+- `payment.log`
+- `visa.log`
 
 ## Notes On The Live Mode
 

@@ -1,10 +1,51 @@
 #!/bin/zsh
 set -euo pipefail
 
-ROOT_DIR="${1:-$(pwd)}"
-BUILD_DIR="${2:-$ROOT_DIR/build}"
+ROOT_DIR="$(pwd)"
+BUILD_DIR=""
+OUT_DIR=""
 PROVER="$ROOT_DIR/adapters/zk-trace-check/target/debug/zk-trace-check"
-TMP_DIR="$(mktemp -d /tmp/etb-live-visa.XXXXXX)"
+AUTO_CLEAN=1
+
+if [[ $# -gt 0 && "${1#--}" == "$1" ]]; then
+  ROOT_DIR="$1"
+  shift
+fi
+if [[ $# -gt 0 && "${1#--}" == "$1" ]]; then
+  BUILD_DIR="$1"
+  shift
+else
+  BUILD_DIR="$ROOT_DIR/build"
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "usage: $0 [ROOT_DIR] [BUILD_DIR] [--out-dir DIR]" >&2
+        exit 1
+      fi
+      OUT_DIR="$2"
+      shift 2
+      ;;
+    *)
+      echo "usage: $0 [ROOT_DIR] [BUILD_DIR] [--out-dir DIR]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ -n "$OUT_DIR" ]]; then
+  mkdir -p "$OUT_DIR"
+  TMP_DIR="$OUT_DIR"
+  AUTO_CLEAN=0
+else
+  TMP_DIR="$(mktemp -d /tmp/etb-live-visa.XXXXXX)"
+fi
+
+CHAIN_DIR="$TMP_DIR/chain"
+TOP_CERT="$TMP_DIR/client-top.cert.cbor"
+TOP_PROOF="$TMP_DIR/client-top.proof"
 
 client_pid=""
 authority_pid=""
@@ -18,9 +59,13 @@ cleanup() {
       wait "$pid" >/dev/null 2>&1 || true
     fi
   done
-  rm -rf "$TMP_DIR"
+  if [[ "$AUTO_CLEAN" -eq 1 ]]; then
+    rm -rf "$TMP_DIR"
+  fi
 }
 trap cleanup EXIT
+
+rm -rf "$CHAIN_DIR"
 
 "$BUILD_DIR/etbd" serve "$ROOT_DIR/examples/live-visa/client.etb" \
   --node-id client \
@@ -56,10 +101,17 @@ visa_pid=$!
 sleep 1
 
 "$BUILD_DIR/etbctl" query 127.0.0.1:7701 'trip_ready(alice)' \
-  --cert-out "$TMP_DIR/client-top.cert.cbor" \
-  --proof-out "$TMP_DIR/client-top.proof" \
-  --bundle-dir "$TMP_DIR/chain" \
+  --cert-out "$TOP_CERT" \
+  --proof-out "$TOP_PROOF" \
+  --bundle-dir "$CHAIN_DIR" \
   --verify-proof \
   --prover "$PROVER"
 
-echo "logs: $TMP_DIR"
+echo "output_dir=$TMP_DIR"
+echo "top_certificate=$TOP_CERT"
+echo "top_proof=$TOP_PROOF"
+echo "bundle_chain=$CHAIN_DIR"
+echo "client_log=$TMP_DIR/client.log"
+echo "authority_log=$TMP_DIR/authority.log"
+echo "payment_log=$TMP_DIR/payment.log"
+echo "visa_log=$TMP_DIR/visa.log"
