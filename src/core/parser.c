@@ -80,8 +80,7 @@ static void etb_scanner_skip_space(etb_scanner *scanner) {
 }
 
 static bool etb_ident_char(char ch) {
-  return isalnum((unsigned char)ch) != 0 || ch == '_' || ch == ':' || ch == '.' ||
-         ch == '-';
+  return isalnum((unsigned char)ch) != 0 || ch == '_' || ch == ':' || ch == '-';
 }
 
 static bool etb_scanner_advance(etb_scanner *scanner, char *error,
@@ -361,7 +360,9 @@ static bool etb_parse_atom_core(etb_scanner *scanner, etb_atom *atom,
     return false;
   }
   principal = scanner->current.text;
+  scanner->current.text = NULL;
   if (!etb_scanner_advance(scanner, error, error_size)) {
+    free(principal);
     return false;
   }
   if (etb_token_is(scanner, TOK_IDENT, "says")) {

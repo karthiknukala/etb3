@@ -80,4 +80,8 @@ if(BUILD_TESTING)
     ETB_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     ETB_BUILD_DIR="${CMAKE_CURRENT_BINARY_DIR}")
   add_test(NAME etb_tests COMMAND etb_tests)
+  add_test(
+    NAME etb_two_node_banking
+    COMMAND /bin/zsh ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/two_node_banking.sh
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 endif()

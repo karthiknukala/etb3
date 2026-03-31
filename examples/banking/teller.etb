@@ -1,0 +1,3 @@
+trusted_customer(alice).
+cash_on_hand.
+approved(Tx, Customer, Amount) :- customer says withdrawal_request(Tx, Customer, Amount), trusted_customer(Customer), cash_on_hand, not blocked(Customer).

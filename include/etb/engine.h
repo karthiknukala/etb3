@@ -49,6 +49,9 @@ bool etb_engine_run_fixpoint(etb_engine *engine, char *error,
                              size_t error_size);
 bool etb_engine_query(etb_engine *engine, const etb_atom *goal,
                       etb_fact_list *answers, char *error, size_t error_size);
+bool etb_engine_import_answers(etb_engine *engine, const etb_atom *answers,
+                               size_t answer_count, const char *evidence_digest,
+                               char *error, size_t error_size);
 void etb_fact_list_init(etb_fact_list *list);
 void etb_fact_list_free(etb_fact_list *list);
 

@@ -511,3 +511,32 @@ bool etb_engine_query(etb_engine *engine, const etb_atom *goal,
   etb_eval_state_free(&initial);
   return true;
 }
+
+bool etb_engine_import_answers(etb_engine *engine, const etb_atom *answers,
+                               size_t answer_count, const char *evidence_digest,
+                               char *error, size_t error_size) {
+  size_t index;
+  for (index = 0U; index < answer_count; ++index) {
+    etb_fact fact;
+    etb_trace_node node;
+    if (!etb_atom_is_ground(&answers[index])) {
+      snprintf(error, error_size, "cannot import non-ground certificate answer");
+      return false;
+    }
+    memset(&node, 0, sizeof(node));
+    node.kind = ETB_TRACE_FACT;
+    node.fact = etb_atom_clone(&answers[index]);
+    node.evidence_digest = (char *)evidence_digest;
+    fact.atom = etb_atom_clone(&answers[index]);
+    fact.trace_id = etb_trace_append(&engine->trace, &node);
+    fact.from_capability = false;
+    etb_atom_free(&node.fact);
+    if (fact.trace_id == (size_t)-1 ||
+        !etb_relation_set_add_fact(&engine->relations, &fact, error, error_size)) {
+      etb_atom_free(&fact.atom);
+      return false;
+    }
+    etb_atom_free(&fact.atom);
+  }
+  return true;
+}
