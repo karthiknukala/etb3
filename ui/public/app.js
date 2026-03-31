@@ -59,7 +59,11 @@
       activity: Array.isArray(snapshot.activity) ? snapshot.activity : [],
       messages: Array.isArray(snapshot.messages) ? snapshot.messages : [],
       catalog: Array.isArray(snapshot.catalog) ? snapshot.catalog : [],
-      lastQuery: snapshot.lastQuery || null
+      lastQuery: snapshot.lastQuery
+        ? Object.assign({}, snapshot.lastQuery, {
+            traces: Array.isArray(snapshot.lastQuery.traces) ? snapshot.lastQuery.traces : []
+          })
+        : null
     };
   }
 
@@ -351,6 +355,41 @@
     return Object.values(map).sort((lhs, rhs) => lhs.id.localeCompare(rhs.id));
   }
 
+  function parseTraceSteps(text) {
+    if (!text) {
+      return [];
+    }
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const match = /^\[(\d+)\]\s+(\w+)\s+r(\d+)\s+(.*?)(?:\s+<-\s+(.*?))?(?:\s+evidence=(.*))?$/.exec(
+          line
+        );
+        if (!match) {
+          return {
+            raw: line,
+            kind: "raw",
+            id: "",
+            ruleId: "",
+            fact: line,
+            premises: [],
+            evidence: ""
+          };
+        }
+        return {
+          raw: line,
+          id: match[1],
+          kind: match[2],
+          ruleId: match[3],
+          fact: match[4],
+          premises: match[5] ? match[5].split(/\s*,\s*/) : [],
+          evidence: match[6] || ""
+        };
+      });
+  }
+
   function apiJson(url, body) {
     return fetch(url, {
       method: "POST",
@@ -401,14 +440,16 @@
     const [controlError, setControlError] = useState("");
     const [controlNote, setControlNote] = useState("");
     const [sidebarOpen, setSidebarOpen] = useState(true);
-    const [activityOpen, setActivityOpen] = useState(false);
+    const [overlayMode, setOverlayMode] = useState("");
     const [expandedPresetIds, setExpandedPresetIds] = useState({});
     const [expandedNodeIds, setExpandedNodeIds] = useState({});
+    const [collapsedScenarioIds, setCollapsedScenarioIds] = useState({});
     const [expandedResultIds, setExpandedResultIds] = useState({
       artifacts: true,
       answers: false,
       verification: true
     });
+    const [selectedTraceId, setSelectedTraceId] = useState("");
 
     useEffect(() => {
       fetch("/api/state")
@@ -462,6 +503,9 @@
       () => queryTargets(snapshot.nodes, snapshot.catalog),
       [snapshot.nodes, snapshot.catalog]
     );
+    const traceArtifacts = snapshot.lastQuery && Array.isArray(snapshot.lastQuery.traces)
+      ? snapshot.lastQuery.traces
+      : [];
 
     useEffect(() => {
       const preferred = preferredQueryNode(selectableTargets);
@@ -469,6 +513,19 @@
         setSelectedNodeId(preferred);
       }
     }, [selectableTargets, selectedNodeId]);
+
+    useEffect(() => {
+      if (traceArtifacts.length === 0) {
+        setSelectedTraceId("");
+        if (overlayMode === "trace") {
+          setOverlayMode("");
+        }
+        return;
+      }
+      if (!selectedTraceId || !traceArtifacts.some((trace) => trace.id === selectedTraceId)) {
+        setSelectedTraceId(traceArtifacts[traceArtifacts.length - 1].id);
+      }
+    }, [traceArtifacts, selectedTraceId, overlayMode]);
 
     const selectedNode = useMemo(
       () => selectableTargets.find((node) => node.id === selectedNodeId) || null,
@@ -510,6 +567,21 @@
         }));
     }, [snapshot.catalog]);
 
+    const selectedTrace = useMemo(() => {
+      if (traceArtifacts.length === 0) {
+        return null;
+      }
+      return (
+        traceArtifacts.find((trace) => trace.id === selectedTraceId) ||
+        traceArtifacts[traceArtifacts.length - 1]
+      );
+    }, [traceArtifacts, selectedTraceId]);
+
+    const selectedTraceSteps = useMemo(
+      () => parseTraceSteps(selectedTrace ? selectedTrace.text : ""),
+      [selectedTrace]
+    );
+
     const runningPresetCount = snapshot.catalog.filter((preset) => preset.running).length;
     const latestActivity = snapshot.activity.length > 0 ? snapshot.activity[0] : null;
 
@@ -519,6 +591,10 @@
           [key]: !current[key]
         })
       );
+    }
+
+    function toggleOverlay(mode) {
+      setOverlayMode((current) => (current === mode ? "" : mode));
     }
 
     async function refreshFromResponse(promise) {
@@ -571,7 +647,7 @@
           })
         );
         if (ok) {
-          setControlNote("Query finished. Open the artifact drawers below to inspect the certificate and proof paths.");
+          setControlNote("Query finished. Open Trace Query when you want to inspect the inference steps.");
         }
       } finally {
         setControlBusy("");
@@ -678,9 +754,9 @@
                     : "primary-button compact",
                 disabled:
                   !preset.managed ||
-                  controlBusy !== "" &&
-                  controlBusy !== `start:${preset.id}` &&
-                  controlBusy !== `stop:${preset.id}`,
+                  (controlBusy !== "" &&
+                    controlBusy !== `start:${preset.id}` &&
+                    controlBusy !== `stop:${preset.id}`),
                 onClick: function () {
                   if (!preset.managed) {
                     return;
@@ -785,6 +861,203 @@
       );
     }
 
+    function renderActivityList() {
+      if (snapshot.activity.length === 0) {
+        return h(
+          "div",
+          { className: "overlay-empty-state" },
+          "The event stream will populate as nodes start, query, and exchange proofs."
+        );
+      }
+      return h(
+        "div",
+        { className: "activity-list overlay-scroll" },
+        snapshot.activity.map((entry) =>
+          h(
+            "article",
+            { key: entry.id, className: `activity-row activity-${activityTone(entry)}` },
+            h("span", { className: "activity-time" }, formatTime(entry.ts)),
+            h(
+              "div",
+              { className: "activity-copy" },
+              h("strong", null, entry.title),
+              h("p", null, entry.detail)
+            )
+          )
+        )
+      );
+    }
+
+    function renderTraceViewer() {
+      if (!snapshot.lastQuery || traceArtifacts.length === 0) {
+        return h(
+          "div",
+          { className: "overlay-empty-state" },
+          "Run a query first, then open the engine trace to inspect the inference steps and imported proof chain."
+        );
+      }
+      return h(
+        "div",
+        { className: "trace-shell" },
+        h(
+          "div",
+          { className: "trace-list" },
+          traceArtifacts.map((trace) =>
+            h(
+              "button",
+              {
+                type: "button",
+                key: trace.id,
+                className: trace.id === (selectedTrace ? selectedTrace.id : "") ? "trace-tab is-active" : "trace-tab",
+                onClick: function () {
+                  setSelectedTraceId(trace.id);
+                }
+              },
+              h("span", { className: "trace-tab-title" }, trace.label),
+              h("span", { className: "trace-tab-meta" }, `${trace.stepCount} steps`)
+            )
+          )
+        ),
+        h(
+          "div",
+          { className: "trace-detail" },
+          selectedTrace
+            ? [
+                h(
+                  "div",
+                  { className: "trace-header", key: "header" },
+                  h("span", { className: "section-kicker" }, "Selected Trace"),
+                  h("strong", { className: "trace-selected-title" }, selectedTrace.label),
+                  h("p", { className: "trace-selected-path" }, selectedTrace.path)
+                ),
+                h(
+                  "div",
+                  { className: "trace-steps overlay-scroll", key: "steps" },
+                  selectedTraceSteps.length > 0
+                    ? selectedTraceSteps.map((step, index) =>
+                        h(
+                          "article",
+                          {
+                            key: `${selectedTrace.id}:${index}:${step.id || "raw"}`,
+                            className: `trace-step trace-${step.kind || "raw"}`
+                          },
+                          step.kind === "raw"
+                            ? h("code", { className: "trace-raw" }, step.raw)
+                            : [
+                                h(
+                                  "div",
+                                  { className: "trace-step-head", key: "head" },
+                                  h(
+                                    "span",
+                                    { className: "trace-step-id" },
+                                    `#${step.id || index + 1}`
+                                  ),
+                                  h("span", { className: `trace-kind trace-kind-${step.kind}` }, step.kind),
+                                  h(
+                                    "span",
+                                    { className: "trace-rule" },
+                                    `r${step.ruleId}`
+                                  )
+                                ),
+                                h("code", { className: "trace-fact", key: "fact" }, step.fact),
+                                step.premises.length > 0
+                                  ? h(
+                                      "p",
+                                      { className: "trace-aux", key: "premises" },
+                                      `premises: ${step.premises.join(", ")}`
+                                    )
+                                  : null,
+                                step.evidence
+                                  ? h(
+                                      "p",
+                                      { className: "trace-aux", key: "evidence" },
+                                      `evidence: ${step.evidence}`
+                                    )
+                                  : null
+                              ]
+                        )
+                      )
+                    : h("div", { className: "overlay-empty-state" }, "No steps were rendered for this trace.")
+                )
+              ]
+            : h("div", { className: "overlay-empty-state" }, "Select a trace on the left.")
+        )
+      );
+    }
+
+    function renderOverlay() {
+      if (!overlayMode) {
+        return null;
+      }
+      const showingTrace = overlayMode === "trace";
+      const title = showingTrace ? "Datalog Inference Trace" : "Event Stream";
+      const summary = showingTrace
+        ? snapshot.lastQuery
+          ? `${snapshot.lastQuery.nodeId} · ${snapshot.lastQuery.queryText}`
+          : "No query trace is available yet."
+        : latestActivity
+          ? `${formatTime(latestActivity.ts)} · ${latestActivity.title}`
+          : "Recent lifecycle and query events.";
+      return h(
+        "section",
+        { className: `overlay-pane overlay-${overlayMode}` },
+        h(
+          "div",
+          { className: "overlay-header" },
+          h(
+            "div",
+            { className: "overlay-header-copy" },
+            h("span", { className: "section-kicker" }, showingTrace ? "Trace Overlay" : "Activity Overlay"),
+            h("h3", { className: "overlay-title" }, title),
+            h("p", { className: "overlay-summary" }, summary)
+          ),
+          h(
+            "div",
+            { className: "overlay-actions" },
+            h(
+              "button",
+              {
+                type: "button",
+                className: overlayMode === "activity" ? "tab-button is-active" : "tab-button",
+                onClick: function () {
+                  setOverlayMode("activity");
+                }
+              },
+              "Events"
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: overlayMode === "trace" ? "tab-button is-active" : "tab-button",
+                disabled: traceArtifacts.length === 0,
+                onClick: function () {
+                  setOverlayMode("trace");
+                }
+              },
+              "Trace"
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: "secondary-button compact",
+                onClick: function () {
+                  setOverlayMode("");
+                }
+              },
+              "Close"
+            )
+          )
+        ),
+        h(
+          "div",
+          { className: "overlay-body" },
+          overlayMode === "trace" ? renderTraceViewer() : renderActivityList()
+        )
+      );
+    }
+
     function renderQueryPane() {
       return h(
         "div",
@@ -797,7 +1070,7 @@
           h(
             "p",
             { className: "section-subtitle" },
-            "Choose a client-facing node, run the query, then inspect the certificate and proof artifacts below."
+            "Choose a client-facing node, submit the goal, then inspect the trace, certificate, and proof artifacts without leaving the topology view."
           )
         ),
         h(
@@ -873,6 +1146,18 @@
                 onClick: handleVerify
               },
               controlBusy === "verify" ? "Checking..." : "Run Proof Checker"
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: "secondary-button",
+                disabled: traceArtifacts.length === 0,
+                onClick: function () {
+                  setOverlayMode("trace");
+                }
+              },
+              "Trace Engine"
             )
           )
         ),
@@ -898,6 +1183,7 @@
                   { className: "result-summary-grid" },
                   MetricChip("Answers", String(snapshot.lastQuery.answers ? snapshot.lastQuery.answers.length : 0)),
                   MetricChip("Bundles", String(snapshot.lastQuery.bundles || 0)),
+                  MetricChip("Traces", String(traceArtifacts.length)),
                   MetricChip("Status", snapshot.lastQuery.success ? "ok" : "failed")
                 )
               ),
@@ -914,6 +1200,7 @@
                   detailLine("Certificate", snapshot.lastQuery.certificatePath || "not written"),
                   detailLine("Proof", snapshot.lastQuery.proofPath || "not written"),
                   detailLine("Bundle Dir", snapshot.lastQuery.bundleDir || "n/a"),
+                  detailLine("Trace Files", traceArtifacts.map((trace) => trace.path).join("\n") || "none"),
                   detailLine("stdout", snapshot.lastQuery.stdoutPath || "n/a"),
                   detailLine("stderr", snapshot.lastQuery.stderrPath || "n/a")
                 )
@@ -970,8 +1257,8 @@
               "div",
               { className: "empty-state" },
               selectableTargets.length > 0
-                ? `Ready to query ${selectedNodeId || "a live node"}. The proof and certificate drawers will appear here after the first run.`
-                : "No dashboard query has been run yet. Start a client or customer node, then send a query from this pane."
+                ? `Ready to query ${selectedNodeId || "a live node"}. Artifacts and trace steps will appear here after the first run.`
+                : "Start a client or customer node from the catalog to begin."
             )
       );
     }
@@ -980,23 +1267,41 @@
       return h(
         "div",
         { className: "sidebar-scroll launch-pane" },
-        groupedCatalog.map((group) =>
-          h(
+        groupedCatalog.map((group) => {
+          const collapsed = !!collapsedScenarioIds[group.scenario];
+          return h(
             "section",
-            { key: group.scenario, className: "sidebar-section" },
+            { key: group.scenario, className: "sidebar-section scenario-section" },
             h(
               "div",
               { className: "section-heading-row" },
-              h("h3", { className: "section-title" }, group.scenario),
-              h("span", { className: "section-count" }, `${group.items.length} nodes`)
+              h(
+                "div",
+                { className: "scenario-copy" },
+                h("h3", { className: "section-title" }, group.scenario),
+                h("span", { className: "section-count" }, `${group.items.length} nodes`)
+              ),
+              h(
+                "button",
+                {
+                  type: "button",
+                  className: "secondary-button compact",
+                  onClick: function () {
+                    toggleMapEntry(setCollapsedScenarioIds, group.scenario);
+                  }
+                },
+                collapsed ? "Expand" : "Collapse"
+              )
             ),
-            h(
-              "div",
-              { className: "compact-list scroll-list" },
-              group.items.map(renderPresetCard)
-            )
-          )
-        ),
+            collapsed
+              ? null
+              : h(
+                  "div",
+                  { className: "compact-list scroll-list" },
+                  group.items.map(renderPresetCard)
+                )
+          );
+        }),
         h(
           "section",
           { className: "sidebar-section" },
@@ -1031,7 +1336,7 @@
           h(
             "p",
             { className: "topbar-subtext" },
-            "Watch topology updates in real time, route live queries, and verify proof artifacts without losing the cluster view."
+            "Live topology, query control, proof verification, and Datalog inference tracing in one view."
           )
         ),
         h(
@@ -1048,12 +1353,24 @@
             "button",
             {
               type: "button",
-              className: "secondary-button",
+              className: overlayMode === "activity" ? "tab-button is-active" : "secondary-button",
               onClick: function () {
-                setActivityOpen(!activityOpen);
+                toggleOverlay("activity");
               }
             },
-            activityOpen ? "Hide Logs" : "Show Logs"
+            overlayMode === "activity" ? "Hide Events" : "Event Stream"
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              className: overlayMode === "trace" ? "tab-button is-active" : "secondary-button",
+              disabled: traceArtifacts.length === 0,
+              onClick: function () {
+                toggleOverlay("trace");
+              }
+            },
+            overlayMode === "trace" ? "Hide Trace" : "Trace Query"
           ),
           h(
             "button",
@@ -1084,7 +1401,7 @@
                 "div",
                 null,
                 h("h2", null, "Topology"),
-                h("p", null, "Live peers stay on the canvas while animated dots trace active communication.")
+                h("p", null, "Peers stay on the stage while overlays reveal the event stream and inference trace.")
               ),
               h(
                 "div",
@@ -1094,126 +1411,76 @@
               )
             ),
             h(
-              "svg",
-              { className: "network-canvas", viewBox: "0 0 1180 760" },
+              "div",
+              { className: "topology-stage" },
               h(
-                "defs",
-                null,
+                "svg",
+                { className: "network-canvas", viewBox: "0 0 1180 760" },
                 h(
-                  "radialGradient",
-                  { id: "panelGlow" },
-                  h("stop", { offset: "0%", stopColor: "rgba(255,255,255,0.20)" }),
-                  h("stop", { offset: "100%", stopColor: "rgba(255,255,255,0)" })
-                )
-              ),
-              h("rect", { x: 0, y: 0, width: 1180, height: 760, fill: "url(#panelGlow)" }),
-              edges.map((edge) => {
-                const from = layout[edge.fromNodeId];
-                const to = layout[edge.toNodeId];
-                if (!from || !to) {
-                  return null;
-                }
-                return h("line", {
-                  key: edge.key,
-                  x1: from.x,
-                  y1: from.y,
-                  x2: to.x,
-                  y2: to.y,
-                  className: "edge-line"
-                });
-              }),
-              pulses.map((pulse) => {
-                const from = layout[pulse.fromNodeId];
-                const to = layout[pulse.toNodeId];
-                if (!from || !to) {
-                  return null;
-                }
-                const progress = Math.max(0, Math.min(1, (now - pulse.ts) / 1500));
-                const x = from.x + (to.x - from.x) * progress;
-                const y = from.y + (to.y - from.y) * progress;
-                return h(
-                  "g",
-                  { key: pulse.id },
-                  h("circle", { cx: x, cy: y, r: 7, className: "pulse-dot" }),
-                  progress < 0.9
-                    ? h("text", { x: x + 12, y: y - 10, className: "pulse-label" }, pulse.label)
-                    : null
-                );
-              }),
-              snapshot.nodes.map((node) => {
-                const position = layout[node.id];
-                if (!position) {
-                  return null;
-                }
-                const tone = statusTone(node);
-                return h(
-                  "g",
-                  { key: node.id, transform: `translate(${position.x}, ${position.y})` },
-                  h("circle", { r: node.kind === "external" ? 38 : 52, className: `node-core node-${tone}` }),
-                  h("circle", { r: node.kind === "external" ? 52 : 68, className: "node-halo" }),
-                  h("text", { y: -8, className: "node-title", textAnchor: "middle" }, node.id),
-                  h("text", { y: 17, className: "node-subtitle", textAnchor: "middle" }, node.endpoint || node.status),
-                  node.currentQuery
-                    ? h("text", { y: 62, className: "node-query", textAnchor: "middle" }, node.currentQuery)
-                    : null
-                );
-              })
-            )
-          ),
-          h(
-            "section",
-            {
-              className: activityOpen
-                ? "activity-shell panel-surface is-open"
-                : "activity-shell panel-surface"
-            },
-            h(
-              "button",
-              {
-                type: "button",
-                className: "disclosure-toggle activity-toggle",
-                onClick: function () {
-                  setActivityOpen(!activityOpen);
-                }
-              },
-              h(
-                "div",
-                { className: "disclosure-toggle-copy" },
-                h("span", { className: "disclosure-kicker" }, "Activity"),
-                h(
-                  "strong",
-                  { className: "disclosure-title" },
-                  latestActivity ? latestActivity.title : "No activity yet"
-                ),
-                h(
-                  "span",
-                  { className: "activity-summary" },
-                  latestActivity
-                    ? `${formatTime(latestActivity.ts)} · ${latestActivity.detail || "Recent lifecycle and query events"}`
-                    : "Open the log drawer to inspect node lifecycle events and Datalog invocations."
-                )
-              ),
-              h("span", { className: "disclosure-chevron" }, activityOpen ? "Hide" : "Show")
-            ),
-            activityOpen
-              ? h(
-                  "div",
-                  { className: "activity-list" },
-                  snapshot.activity.map((entry) =>
-                    h(
-                      "article",
-                      { key: entry.id, className: `activity-row activity-${activityTone(entry)}` },
-                      h("span", { className: "activity-time" }, formatTime(entry.ts)),
-                      h(
-                        "div",
-                        { className: "activity-copy" },
-                        h("strong", null, entry.title),
-                        h("p", null, entry.detail)
-                      )
-                    )
+                  "defs",
+                  null,
+                  h(
+                    "radialGradient",
+                    { id: "panelGlow" },
+                    h("stop", { offset: "0%", stopColor: "rgba(255,255,255,0.20)" }),
+                    h("stop", { offset: "100%", stopColor: "rgba(255,255,255,0)" })
                   )
-                )
-              : null
+                ),
+                h("rect", { x: 0, y: 0, width: 1180, height: 760, fill: "url(#panelGlow)" }),
+                edges.map((edge) => {
+                  const from = layout[edge.fromNodeId];
+                  const to = layout[edge.toNodeId];
+                  if (!from || !to) {
+                    return null;
+                  }
+                  return h("line", {
+                    key: edge.key,
+                    x1: from.x,
+                    y1: from.y,
+                    x2: to.x,
+                    y2: to.y,
+                    className: "edge-line"
+                  });
+                }),
+                pulses.map((pulse) => {
+                  const from = layout[pulse.fromNodeId];
+                  const to = layout[pulse.toNodeId];
+                  if (!from || !to) {
+                    return null;
+                  }
+                  const progress = Math.max(0, Math.min(1, (now - pulse.ts) / 1500));
+                  const x = from.x + (to.x - from.x) * progress;
+                  const y = from.y + (to.y - from.y) * progress;
+                  return h(
+                    "g",
+                    { key: pulse.id },
+                    h("circle", { cx: x, cy: y, r: 7, className: "pulse-dot" }),
+                    progress < 0.9
+                      ? h("text", { x: x + 12, y: y - 10, className: "pulse-label" }, pulse.label)
+                      : null
+                  );
+                }),
+                snapshot.nodes.map((node) => {
+                  const position = layout[node.id];
+                  if (!position) {
+                    return null;
+                  }
+                  const tone = statusTone(node);
+                  return h(
+                    "g",
+                    { key: node.id, transform: `translate(${position.x}, ${position.y})` },
+                    h("circle", { r: node.kind === "external" ? 38 : 52, className: `node-core node-${tone}` }),
+                    h("circle", { r: node.kind === "external" ? 52 : 68, className: "node-halo" }),
+                    h("text", { y: -8, className: "node-title", textAnchor: "middle" }, node.id),
+                    h("text", { y: 17, className: "node-subtitle", textAnchor: "middle" }, node.endpoint || node.status),
+                    node.currentQuery
+                      ? h("text", { y: 62, className: "node-query", textAnchor: "middle" }, node.currentQuery)
+                      : null
+                  );
+                })
+              ),
+              renderOverlay()
+            )
           )
         ),
         h(
@@ -1234,7 +1501,7 @@
                   "p",
                   null,
                   activeTab === "query"
-                    ? "Run a query and inspect the returned proof bundle."
+                    ? "Run a query, inspect the trace, and verify the returned proof bundle."
                     : "Start or stop nodes and inspect live node state."
                 )
               ),

@@ -34,5 +34,6 @@ void etb_trace_init(etb_trace *trace);
 void etb_trace_free(etb_trace *trace);
 size_t etb_trace_append(etb_trace *trace, const etb_trace_node *node);
 bool etb_trace_digest_node(etb_trace_node *node);
+bool etb_trace_render(const etb_trace *trace, char **text_out);
 
 #endif

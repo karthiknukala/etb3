@@ -41,6 +41,21 @@ static bool write_bytes(const char *path, const unsigned char *bytes,
   return true;
 }
 
+static bool write_text(const char *path, const char *text) {
+  FILE *stream = fopen(path, "wb");
+  size_t size;
+  if (stream == NULL) {
+    return false;
+  }
+  size = text == NULL ? 0U : strlen(text);
+  if (size > 0U && fwrite(text, 1U, size, stream) != size) {
+    fclose(stream);
+    return false;
+  }
+  fclose(stream);
+  return true;
+}
+
 static bool write_bundle_dir(const char *dir, const etb_bundle_list *bundles) {
   size_t index;
   if (!ensure_directory(dir)) {
@@ -50,6 +65,7 @@ static bool write_bundle_dir(const char *dir, const etb_bundle_list *bundles) {
     char node_name[128];
     char cert_path[512];
     char proof_path[512];
+    char trace_path[512];
     sanitize_name(bundles->items[index].node_id, node_name, sizeof(node_name));
     snprintf(cert_path, sizeof(cert_path), "%s/%02zu-%s.cert.cbor", dir,
              index + 1U, node_name);
@@ -62,6 +78,13 @@ static bool write_bundle_dir(const char *dir, const etb_bundle_list *bundles) {
                index + 1U, node_name);
       if (!write_bytes(proof_path, bundles->items[index].proof_bytes,
                        bundles->items[index].proof_size)) {
+        return false;
+      }
+    }
+    if (bundles->items[index].trace_text != NULL) {
+      snprintf(trace_path, sizeof(trace_path), "%s/%02zu-%s.trace.txt", dir,
+               index + 1U, node_name);
+      if (!write_text(trace_path, bundles->items[index].trace_text)) {
         return false;
       }
     }

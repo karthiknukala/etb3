@@ -14,7 +14,10 @@ interactive control deck.
 - a small command line pane for sending live ETB queries
 - proof verification status for the most recent dashboard query
 - highlighted logic-hop events for remote Datalog invocations
-- scrollable activity and node panes so the dashboard stays readable during long runs
+- a one-screen layout with a collapsible control sidebar
+- an event-stream overlay over the topology instead of a stacked log section
+- a per-query Datalog trace overlay that shows the inference steps emitted by the engine
+- collapsible example groups and scrollable node/catalog lists inside the sidebar
 
 Communication events are drawn as animated dots travelling between nodes in the
 browser.
@@ -53,6 +56,7 @@ Each UI-submitted query gets its own output directory with:
 - `top.cert.cbor`
 - `top.proof`
 - `chain/`
+- `chain/*.trace.txt`
 - `query.stdout.txt`
 - `query.stderr.txt`
 
@@ -86,8 +90,9 @@ npm run ui -- --port 4090 --preset-file /absolute/path/to/node-presets.json
 2. Open the `Nodes` tab in the dashboard and start the example nodes you want.
 3. Wait for them to appear as live in the graph.
 4. Open the `Query` tab, target a live node, and submit a query.
-5. Use `Run Proof Checker` to verify the most recent returned artifacts.
-6. Watch the graph update in real time.
+5. Use `Trace Engine` or the top-bar `Trace Query` button to open the per-query inference overlay.
+6. Use `Run Proof Checker` to verify the most recent returned artifacts.
+7. Watch the graph update in real time.
 
 Example:
 
@@ -143,6 +148,10 @@ There is no separate cluster-wide dashboard registry yet.
 Repeated `announce` and `registry` chatter is intentionally collapsed so the
 activity view keeps the initial discovery handshakes but emphasizes the
 query-time Datalog path.
+
+The event stream and the Datalog trace both render as overlays inside the graph
+stage, so you can inspect the exchange without losing the topology view or
+introducing top-level page scrolling.
 
 The control deck talks to additional local endpoints exposed by the UI server:
 

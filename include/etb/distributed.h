@@ -24,6 +24,7 @@ typedef struct etb_endpoint_list {
 typedef struct etb_bundle {
   char *node_id;
   char *query_text;
+  char *trace_text;
   unsigned char *certificate_bytes;
   size_t certificate_size;
   unsigned char *proof_bytes;
@@ -53,6 +54,7 @@ void etb_bundle_list_init(etb_bundle_list *list);
 void etb_bundle_list_free(etb_bundle_list *list);
 bool etb_bundle_list_add_copy(etb_bundle_list *list, const char *node_id,
                               const char *query_text,
+                              const char *trace_text,
                               const unsigned char *certificate_bytes,
                               size_t certificate_size,
                               const unsigned char *proof_bytes,

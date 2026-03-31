@@ -638,6 +638,47 @@ function parseQueryOutput(stdout) {
   return result;
 }
 
+function traceLabelFromEntry(entry) {
+  const match = /^(\d+)-(.+)\.trace\.txt$/.exec(entry);
+  if (!match) {
+    return entry.replace(/\.trace\.txt$/, "");
+  }
+  return `${Number(match[1])}. ${match[2].replace(/_/g, " ")}`;
+}
+
+async function collectTraceArtifacts(bundleDir) {
+  const traces = [];
+  if (!bundleDir) {
+    return traces;
+  }
+  let entries = [];
+  try {
+    entries = await fs.promises.readdir(bundleDir);
+  } catch {
+    return traces;
+  }
+  for (const entry of entries.sort()) {
+    if (!entry.endsWith(".trace.txt")) {
+      continue;
+    }
+    const tracePath = path.join(bundleDir, entry);
+    let text = "";
+    try {
+      text = await fs.promises.readFile(tracePath, "utf8");
+    } catch {
+      continue;
+    }
+    traces.push({
+      id: entry.replace(/\.trace\.txt$/, ""),
+      label: traceLabelFromEntry(entry),
+      path: tracePath,
+      stepCount: text.trim() === "" ? 0 : text.trim().split(/\r?\n/).length,
+      text
+    });
+  }
+  return traces;
+}
+
 function spawnCommand(command, args, extra = {}) {
   return new Promise((resolve) => {
     const child = spawn(command, args, {
@@ -901,6 +942,7 @@ async function runQuery(nodeId, queryText) {
       stdout: result.stdout,
       stderr: result.stderr,
       success: false,
+      traces: [],
       verification: null
     };
     addActivity({
@@ -915,6 +957,7 @@ async function runQuery(nodeId, queryText) {
   }
 
   const parsed = parseQueryOutput(result.stdout);
+  const traces = await collectTraceArtifacts(bundleDir);
   state.lastQuery = {
     id: stamp,
     ts: Date.now(),
@@ -933,6 +976,7 @@ async function runQuery(nodeId, queryText) {
     root: parsed.root,
     answers: parsed.answers,
     bundles: parsed.bundles,
+    traces,
     verification: null
   };
   addActivity({

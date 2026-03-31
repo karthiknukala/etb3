@@ -57,6 +57,13 @@ typedef struct etb_node_context {
   char registry_path[256];
 } etb_node_context;
 
+static bool etb_remote_query_with_context(const etb_node_context *caller_context,
+                                          const char *endpoint,
+                                          const char *query_text,
+                                          etb_bundle_list *bundles,
+                                          char *error,
+                                          size_t error_size);
+
 static void etb_string_list_init(etb_string_list *list) {
   memset(list, 0, sizeof(*list));
 }
@@ -217,6 +224,7 @@ bool etb_endpoint_list_add(etb_endpoint_list *list, const char *endpoint) {
 static void etb_bundle_free(etb_bundle *bundle) {
   free(bundle->node_id);
   free(bundle->query_text);
+  free(bundle->trace_text);
   free(bundle->certificate_bytes);
   free(bundle->proof_bytes);
   memset(bundle, 0, sizeof(*bundle));
@@ -244,6 +252,7 @@ static bool etb_bundle_matches(const etb_bundle *bundle, const char *node_id,
 
 bool etb_bundle_list_add_copy(etb_bundle_list *list, const char *node_id,
                               const char *query_text,
+                              const char *trace_text,
                               const unsigned char *certificate_bytes,
                               size_t certificate_size,
                               const unsigned char *proof_bytes,
@@ -267,10 +276,13 @@ bool etb_bundle_list_add_copy(etb_bundle_list *list, const char *node_id,
   memset(&list->items[list->count], 0, sizeof(list->items[list->count]));
   list->items[list->count].node_id = strdup(node_id);
   list->items[list->count].query_text = strdup(query_text);
+  list->items[list->count].trace_text =
+      trace_text == NULL ? NULL : strdup(trace_text);
   list->items[list->count].certificate_bytes =
       (unsigned char *)malloc(certificate_size == 0U ? 1U : certificate_size);
   if (list->items[list->count].node_id == NULL ||
       list->items[list->count].query_text == NULL ||
+      (trace_text != NULL && list->items[list->count].trace_text == NULL) ||
       (certificate_size > 0U &&
        list->items[list->count].certificate_bytes == NULL)) {
     etb_bundle_free(&list->items[list->count]);
@@ -301,6 +313,7 @@ bool etb_bundle_list_append_unique(etb_bundle_list *dst,
   for (index = 0U; index < src->count; ++index) {
     if (!etb_bundle_list_add_copy(dst, src->items[index].node_id,
                                   src->items[index].query_text,
+                                  src->items[index].trace_text,
                                   src->items[index].certificate_bytes,
                                   src->items[index].certificate_size,
                                   src->items[index].proof_bytes,
@@ -794,11 +807,14 @@ bool etb_bundle_verify_with_prover(const char *prover_path,
 }
 
 static bool etb_encode_bundle(etb_cbor_buffer *buffer, const etb_bundle *bundle) {
-  return etb_cbor_write_map_header(buffer, 4U) &&
+  return etb_cbor_write_map_header(buffer, 5U) &&
          etb_cbor_write_text(buffer, "node") &&
          etb_cbor_write_text(buffer, bundle->node_id) &&
          etb_cbor_write_text(buffer, "query") &&
          etb_cbor_write_text(buffer, bundle->query_text) &&
+         etb_cbor_write_text(buffer, "trace") &&
+         (bundle->trace_text == NULL ? etb_cbor_write_null(buffer)
+                                     : etb_cbor_write_text(buffer, bundle->trace_text)) &&
          etb_cbor_write_text(buffer, "cert") &&
          etb_cbor_write_bytes(buffer, bundle->certificate_bytes,
                               bundle->certificate_size) &&
@@ -924,6 +940,16 @@ static bool etb_decode_bundle(etb_cbor_cursor *cursor, etb_bundle *bundle) {
       }
     } else if (strcmp(key, "query") == 0) {
       if (!etb_cbor_read_text(cursor, &bundle->query_text)) {
+        free(key);
+        return false;
+      }
+    } else if (strcmp(key, "trace") == 0) {
+      if (cursor->offset < cursor->size && cursor->data[cursor->offset] == 0xf6U) {
+        if (!etb_cbor_read_null(cursor)) {
+          free(key);
+          return false;
+        }
+      } else if (!etb_cbor_read_text(cursor, &bundle->trace_text)) {
         free(key);
         return false;
       }
@@ -1110,6 +1136,7 @@ static bool etb_decode_response(const unsigned char *payload, size_t payload_siz
           return false;
         }
         if (!etb_bundle_list_add_copy(bundles, bundle.node_id, bundle.query_text,
+                                      bundle.trace_text,
                                       bundle.certificate_bytes,
                                       bundle.certificate_size,
                                       bundle.proof_bytes, bundle.proof_size)) {
@@ -1630,8 +1657,9 @@ static bool etb_resolve_clause_dependencies(const etb_node_context *context,
       if (!etb_string_list_contains(fetched_queries, remote_query)) {
         etb_telemetry_emit_logic_invoke(context->node_id, remote_query,
                                         instantiated.principal, endpoint);
-        if (!etb_remote_query(endpoint, remote_query, &remote_bundles, error,
-                              error_size)) {
+        if (!etb_remote_query_with_context(context, endpoint, remote_query,
+                                           &remote_bundles, error,
+                                           error_size)) {
           free(remote_query);
           etb_atom_free(&instantiated);
           etb_bundle_list_free(&remote_bundles);
@@ -1751,6 +1779,7 @@ static bool etb_execute_query(const etb_node_context *context,
   etb_certificate certificate;
   unsigned char *proof_bytes = NULL;
   size_t proof_size = 0U;
+  char *trace_text = NULL;
   etb_string_list fetched_queries;
   etb_string_list visited_goals;
   size_t index;
@@ -1773,7 +1802,8 @@ static bool etb_execute_query(const etb_node_context *context,
                                      &fetched_queries, &visited_goals, error,
                                      error_size) ||
       !etb_engine_run_fixpoint(&engine, error, error_size) ||
-      !etb_engine_query(&engine, &query, &answers, error, error_size)) {
+      !etb_engine_query(&engine, &query, &answers, error, error_size) ||
+      !etb_trace_render(&engine.trace, &trace_text)) {
     etb_string_list_free(&visited_goals);
     etb_string_list_free(&fetched_queries);
     etb_bundle_list_free(bundles);
@@ -1836,6 +1866,7 @@ static bool etb_execute_query(const etb_node_context *context,
       !etb_prove_certificate(context->prover_path, certificate.cbor,
                              certificate.cbor_size, &proof_bytes, &proof_size,
                              error, error_size)) {
+    free(trace_text);
     free(proof_bytes);
     etb_string_list_free(&visited_goals);
     etb_string_list_free(&fetched_queries);
@@ -1848,9 +1879,11 @@ static bool etb_execute_query(const etb_node_context *context,
     return false;
   }
   if (!etb_bundle_list_add_copy(bundles, context->node_id, query_text,
+                                trace_text,
                                 certificate.cbor, certificate.cbor_size,
                                 proof_bytes, proof_size)) {
     snprintf(error, error_size, "failed to store bundle");
+    free(trace_text);
     free(proof_bytes);
     etb_string_list_free(&visited_goals);
     etb_string_list_free(&fetched_queries);
@@ -1862,6 +1895,7 @@ static bool etb_execute_query(const etb_node_context *context,
     etb_program_free(&program);
     return false;
   }
+  free(trace_text);
   free(proof_bytes);
   etb_telemetry_emit_query_finished(context->node_id, query_text, true,
                                     answers.count, bundles->count, NULL);
@@ -1875,30 +1909,49 @@ static bool etb_execute_query(const etb_node_context *context,
   return true;
 }
 
-bool etb_remote_query(const char *endpoint, const char *query_text,
-                      etb_bundle_list *bundles, char *error,
-                      size_t error_size) {
-  etb_node_context context;
+static bool etb_remote_query_with_context(const etb_node_context *caller_context,
+                                          const char *endpoint,
+                                          const char *query_text,
+                                          etb_bundle_list *bundles,
+                                          char *error,
+                                          size_t error_size) {
+  etb_node_context synthetic_context;
+  const etb_node_context *context;
   unsigned char *request = NULL;
   size_t request_size = 0U;
   etb_peer_route_map routes;
   char resolved[8];
-  memset(&context, 0, sizeof(context));
-  etb_peer_route_map_init(&context.local_routes);
-  context.node_id = "etbctl";
-  context.listen_endpoint = "";
-  if (!etb_encode_query_request(&context, query_text, &request, &request_size) ||
+  memset(&synthetic_context, 0, sizeof(synthetic_context));
+  context = caller_context;
+  if (context == NULL) {
+    etb_peer_route_map_init(&synthetic_context.local_routes);
+    synthetic_context.node_id = "etbctl";
+    synthetic_context.listen_endpoint = "";
+    context = &synthetic_context;
+  }
+  if (!etb_encode_query_request(context, query_text, &request, &request_size) ||
       !etb_send_request(endpoint, request, request_size, bundles, &routes,
                         resolved, sizeof(resolved), error, error_size)) {
     free(request);
     etb_peer_route_map_free(&routes);
-    etb_peer_route_map_free(&context.local_routes);
+    if (context == &synthetic_context) {
+      etb_peer_route_map_free(&synthetic_context.local_routes);
+    }
     return false;
   }
   free(request);
   etb_peer_route_map_free(&routes);
-  etb_peer_route_map_free(&context.local_routes);
+  if (context == &synthetic_context) {
+    etb_peer_route_map_free(&synthetic_context.local_routes);
+  }
   return true;
+}
+
+bool etb_remote_query(const char *endpoint, const char *query_text,
+                      etb_bundle_list *bundles, char *error,
+                      size_t error_size) {
+  return etb_remote_query_with_context(NULL, endpoint, query_text, bundles,
+                                       error, error_size);
 }
 
 static bool etb_handle_client(int client_fd, const etb_node_context *context) {

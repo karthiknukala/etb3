@@ -73,10 +73,14 @@ The dashboard also includes a control deck:
 - a scrollable node catalog loaded from
   [ui/node-presets.json](/Users/e35480/projects/misc/ETB/etb3/ui/node-presets.json),
   so you can extend the list without editing the dashboard server
+- collapsible example groups so large scenario catalogs stay compact
 - a proof-check button that runs the bundled verifier on the most recent
   certificate/proof artifacts returned by the dashboard query
+- a trace button that opens the per-query Datalog inference stream over the graph
 - highlighted logic-hop entries so remote Datalog invocations stand out from
   seed-discovery traffic
+- an event-stream overlay so logs and topology stay in the same view without
+  top-level scrolling
 
 The UI persists its own logs and query artifacts under:
 
