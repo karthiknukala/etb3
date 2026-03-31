@@ -2,3 +2,4 @@ build/
 adapters/zk-trace-check/target/
 .DS_Store
 .etb/
+node_modules/

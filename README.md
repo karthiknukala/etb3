@@ -17,6 +17,7 @@ Detailed architecture and communication diagrams live in:
 
 - [docs/README.md](/Users/e35480/projects/misc/ETB/etb3/docs/README.md)
 - [docs/architecture.md](/Users/e35480/projects/misc/ETB/etb3/docs/architecture.md)
+- [docs/ui-dashboard.md](/Users/e35480/projects/misc/ETB/etb3/docs/ui-dashboard.md)
 
 Top-level system view:
 
@@ -48,6 +49,37 @@ Temporal semantics today:
 
 The fuller explanation is in
 [docs/architecture.md](/Users/e35480/projects/misc/ETB/etb3/docs/architecture.md).
+
+## Live UI
+
+The repo now includes a local React dashboard that visualizes live ETB nodes,
+query phases, and inter-node communication.
+
+Start it with a single command:
+
+```sh
+npm run ui -- --port 4090
+```
+
+Then launch live nodes or a demo script. As nodes come up they will appear in
+the graph, and incoming communications are rendered as animated dots moving
+between nodes.
+
+The dashboard also includes a control deck:
+
+- a query line that can send a live query to a running node such as `client` or
+  `customer`
+- node launch buttons for the banking and visa example topologies
+- a proof-check button that runs the bundled verifier on the most recent
+  certificate/proof artifacts returned by the dashboard query
+
+The UI persists its own logs and query artifacts under:
+
+- `.etb/ui-dashboard/logs/`
+- `.etb/ui-dashboard/queries/`
+
+The UI guide is in
+[docs/ui-dashboard.md](/Users/e35480/projects/misc/ETB/etb3/docs/ui-dashboard.md).
 
 ## What Is Distributed Today
 
@@ -92,6 +124,12 @@ verification:
 
 ```sh
 cargo build --manifest-path adapters/zk-trace-check/Cargo.toml
+```
+
+Install the React dashboard dependencies once:
+
+```sh
+npm install
 ```
 
 ## Manual Test Invocation

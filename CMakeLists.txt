@@ -31,6 +31,7 @@ add_library(etb STATIC
   src/runtime/swim.c
   src/runtime/signer_soft.c
   src/runtime/signer_macos.c
+  src/runtime/telemetry.c
   src/runtime/distributed.c
   src/runtime/daemon.c
   src/net/frame.c

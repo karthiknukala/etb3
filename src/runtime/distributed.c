@@ -3,6 +3,7 @@
 #include "etb/cert.h"
 #include "etb/engine.h"
 #include "etb/parser.h"
+#include "etb/telemetry.h"
 
 #include "../core/canon.h"
 #include "../core/cbor.h"
@@ -1186,13 +1187,18 @@ static bool etb_encode_announce_request(const etb_node_context *context,
   return true;
 }
 
-static bool etb_encode_registry_request(unsigned char **payload_out,
+static bool etb_encode_registry_request(const etb_node_context *context,
+                                        unsigned char **payload_out,
                                         size_t *payload_size_out) {
   etb_cbor_buffer buffer;
   etb_cbor_buffer_init(&buffer);
-  if (!etb_cbor_write_map_header(&buffer, 1U) ||
+  if (!etb_cbor_write_map_header(&buffer, 3U) ||
       !etb_cbor_write_text(&buffer, "op") ||
-      !etb_cbor_write_text(&buffer, "registry")) {
+      !etb_cbor_write_text(&buffer, "registry") ||
+      !etb_cbor_write_text(&buffer, "node") ||
+      !etb_cbor_write_text(&buffer, context->node_id) ||
+      !etb_cbor_write_text(&buffer, "endpoint") ||
+      !etb_cbor_write_text(&buffer, context->listen_endpoint)) {
     etb_cbor_buffer_free(&buffer);
     return false;
   }
@@ -1201,14 +1207,19 @@ static bool etb_encode_registry_request(unsigned char **payload_out,
   return true;
 }
 
-static bool etb_encode_resolve_request(const char *principal,
+static bool etb_encode_resolve_request(const etb_node_context *context,
+                                       const char *principal,
                                        unsigned char **payload_out,
                                        size_t *payload_size_out) {
   etb_cbor_buffer buffer;
   etb_cbor_buffer_init(&buffer);
-  if (!etb_cbor_write_map_header(&buffer, 2U) ||
+  if (!etb_cbor_write_map_header(&buffer, 4U) ||
       !etb_cbor_write_text(&buffer, "op") ||
       !etb_cbor_write_text(&buffer, "resolve") ||
+      !etb_cbor_write_text(&buffer, "node") ||
+      !etb_cbor_write_text(&buffer, context->node_id) ||
+      !etb_cbor_write_text(&buffer, "endpoint") ||
+      !etb_cbor_write_text(&buffer, context->listen_endpoint) ||
       !etb_cbor_write_text(&buffer, "principal") ||
       !etb_cbor_write_text(&buffer, principal)) {
     etb_cbor_buffer_free(&buffer);
@@ -1393,7 +1404,7 @@ static bool etb_discovery_pull_from_seed(const etb_node_context *context,
   etb_bundle_list_init(&bundles);
   etb_peer_route_map_init(&routes);
   resolved[0] = '\0';
-  if (etb_encode_registry_request(&request, &request_size) &&
+  if (etb_encode_registry_request(context, &request, &request_size) &&
       etb_send_request(endpoint, request, request_size, &bundles, &routes,
                        resolved, sizeof(resolved), error, error_size) &&
       etb_registry_merge_and_save(context->registry_path, &routes)) {
@@ -1420,7 +1431,7 @@ static bool etb_discovery_resolve_with_seed(const etb_node_context *context,
   endpoint_out[0] = '\0';
   etb_bundle_list_init(&bundles);
   etb_peer_route_map_init(&routes);
-  if (etb_encode_resolve_request(principal, &request, &request_size) &&
+  if (etb_encode_resolve_request(context, principal, &request, &request_size) &&
       etb_send_request(seed_endpoint, request, request_size, &bundles, &routes,
                        endpoint_out, endpoint_out_size, error, error_size) &&
       etb_registry_merge_and_save(context->registry_path, &routes)) {
@@ -1517,6 +1528,8 @@ static bool etb_import_remote_bundle(const etb_bundle *bundle,
     etb_certificate_free(&certificate);
     return false;
   }
+  etb_telemetry_emit_bundle_imported(context->node_id, bundle->node_id,
+                                     bundle->query_text);
   etb_certificate_free(&certificate);
   return true;
 }
@@ -1717,6 +1730,7 @@ static bool etb_execute_query(const etb_node_context *context,
   etb_bundle_list_init(bundles);
   etb_string_list_init(&fetched_queries);
   etb_string_list_init(&visited_goals);
+  etb_telemetry_emit_query_started(context->node_id, query_text);
 
   if (!etb_parse_file(context->program_path, &program, error, error_size) ||
       !etb_engine_load_program(&engine, &program, error, error_size) ||
@@ -1816,6 +1830,8 @@ static bool etb_execute_query(const etb_node_context *context,
     return false;
   }
   free(proof_bytes);
+  etb_telemetry_emit_query_finished(context->node_id, query_text, true,
+                                    answers.count, bundles->count, NULL);
   etb_string_list_free(&visited_goals);
   etb_string_list_free(&fetched_queries);
   etb_certificate_free(&certificate);
@@ -1883,10 +1899,18 @@ static bool etb_handle_client(int client_fd, const etb_node_context *context) {
                                     &response_size);
     goto done;
   }
+  etb_telemetry_emit_request_received(context->node_id, context->listen_endpoint,
+                                      decoded.node_id, decoded.endpoint,
+                                      decoded.op, decoded.query_text,
+                                      decoded.principal);
   if (strcmp(decoded.op, "query") == 0) {
     if (decoded.query_text == NULL ||
         !etb_execute_query(context, decoded.query_text, &bundles, error,
                            sizeof(error))) {
+      if (decoded.query_text != NULL) {
+        etb_telemetry_emit_query_finished(context->node_id, decoded.query_text,
+                                          false, 0U, 0U, error);
+      }
       (void)etb_response_encode_error(error, &response, &response_size);
       goto done;
     }
@@ -2011,6 +2035,8 @@ bool etb_node_serve(const char *node_id, const char *program_path,
   }
   printf("etbd[%s] listening on %s\n", node_id, listen_endpoint);
   fflush(stdout);
+  etb_telemetry_emit_node_started(node_id, listen_endpoint, program_path,
+                                  (long)getpid());
   for (;;) {
     int client_fd = accept(listen_fd, NULL, NULL);
     if (client_fd < 0) {

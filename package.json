@@ -1,0 +1,11 @@
+{
+  "name": "etb3-ui",
+  "private": true,
+  "scripts": {
+    "ui": "node ui/server.mjs"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}
