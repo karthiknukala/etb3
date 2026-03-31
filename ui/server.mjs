@@ -16,85 +16,11 @@ const defaultProverPath = path.join(
   "zk-trace-check"
 );
 const defaultControlDir = path.join(rootDir, ".etb", "ui-dashboard");
+const defaultPresetFile = path.join(__dirname, "node-presets.json");
 const publicDir = path.join(__dirname, "public");
 const clients = new Set();
 const managedNodes = new Map();
 const seenDiscoveryRequests = new Set();
-
-const nodePresets = [
-  {
-    id: "banking-customer",
-    scenario: "Banking",
-    label: "Customer",
-    description: "Customer-side node that asks the teller to authorize a withdrawal.",
-    nodeId: "customer",
-    endpoint: "127.0.0.1:8601",
-    programPath: path.join(rootDir, "examples", "live-banking", "customer_node.etb"),
-    seeds: ["127.0.0.1:8602"],
-    recommendedQuery: "cash_authorized(tx1001,alice,50)",
-    queryRole: "primary"
-  },
-  {
-    id: "banking-teller",
-    scenario: "Banking",
-    label: "Teller",
-    description: "Bank teller node that issues the approval proof for the withdrawal.",
-    nodeId: "teller",
-    endpoint: "127.0.0.1:8602",
-    programPath: path.join(rootDir, "examples", "live-banking", "teller_node.etb"),
-    seeds: ["127.0.0.1:8601"],
-    recommendedQuery: "teller says approved(tx1001,alice,50)",
-    queryRole: "service"
-  },
-  {
-    id: "visa-client",
-    scenario: "Visa",
-    label: "Client",
-    description: "Client node that asks the authority to coalesce the travel proof chain.",
-    nodeId: "client",
-    endpoint: "127.0.0.1:8701",
-    programPath: path.join(rootDir, "examples", "live-visa", "client.etb"),
-    seeds: ["127.0.0.1:8702"],
-    recommendedQuery: "trip_ready(alice)",
-    queryRole: "primary"
-  },
-  {
-    id: "visa-authority",
-    scenario: "Visa",
-    label: "Authority",
-    description: "Authority node that coordinates payment and visa delegates.",
-    nodeId: "authority",
-    endpoint: "127.0.0.1:8702",
-    programPath: path.join(rootDir, "examples", "live-visa", "authority.etb"),
-    seeds: [],
-    recommendedQuery: "authority says travel_authorized(alice)",
-    queryRole: "service"
-  },
-  {
-    id: "visa-payment",
-    scenario: "Visa",
-    label: "Payment",
-    description: "Payment delegate that proves the fee was cleared.",
-    nodeId: "payment",
-    endpoint: "127.0.0.1:8703",
-    programPath: path.join(rootDir, "examples", "live-visa", "payment.etb"),
-    seeds: ["127.0.0.1:8702"],
-    recommendedQuery: "payment says payment_cleared(alice)",
-    queryRole: "service"
-  },
-  {
-    id: "visa-visa",
-    scenario: "Visa",
-    label: "Visa Delegate",
-    description: "Visa approval delegate that attests to the client's visa status.",
-    nodeId: "visa",
-    endpoint: "127.0.0.1:8704",
-    programPath: path.join(rootDir, "examples", "live-visa", "visa.etb"),
-    seeds: ["127.0.0.1:8702"],
-    recommendedQuery: "visa says visa_approved(alice)",
-    queryRole: "service"
-  }
-];
 
 function parseArgs(argv) {
   const options = {
@@ -104,6 +30,7 @@ function parseArgs(argv) {
     buildDir: defaultBuildDir,
     proverPath: defaultProverPath,
     controlDir: defaultControlDir,
+    presetFile: defaultPresetFile,
     keepHistory: false
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -120,11 +47,13 @@ function parseArgs(argv) {
       options.proverPath = path.resolve(argv[++index]);
     } else if (arg === "--control-dir" && index + 1 < argv.length) {
       options.controlDir = path.resolve(argv[++index]);
+    } else if (arg === "--preset-file" && index + 1 < argv.length) {
+      options.presetFile = path.resolve(argv[++index]);
     } else if (arg === "--keep-history") {
       options.keepHistory = true;
     } else {
       throw new Error(
-        `unknown option '${arg}'. usage: npm run ui -- --port PORT [--host HOST] [--events-file FILE] [--build-dir DIR] [--prover-path FILE] [--control-dir DIR] [--keep-history]`
+        `unknown option '${arg}'. usage: npm run ui -- --port PORT [--host HOST] [--events-file FILE] [--build-dir DIR] [--prover-path FILE] [--control-dir DIR] [--preset-file FILE] [--keep-history]`
       );
     }
   }
@@ -139,6 +68,64 @@ const logsDir = path.join(options.controlDir, "logs");
 const queriesDir = path.join(options.controlDir, "queries");
 const etbdPath = path.join(options.buildDir, "etbd");
 const etbctlPath = path.join(options.buildDir, "etbctl");
+
+function normalizePreset(record, presetDir) {
+  if (!record || typeof record !== "object") {
+    throw new Error("preset entries must be objects");
+  }
+  if (typeof record.id !== "string" || record.id.trim() === "") {
+    throw new Error("preset entry is missing a valid 'id'");
+  }
+  const id = record.id.trim();
+  const nodeId =
+    typeof record.nodeId === "string" && record.nodeId.trim() !== ""
+      ? record.nodeId.trim()
+      : id;
+  const endpoint =
+    typeof record.endpoint === "string" ? record.endpoint.trim() : "";
+  const programPath =
+    typeof record.programPath === "string" && record.programPath.trim() !== ""
+      ? path.resolve(presetDir, record.programPath)
+      : "";
+  return {
+    id,
+    scenario:
+      typeof record.scenario === "string" && record.scenario.trim() !== ""
+        ? record.scenario.trim()
+        : "Custom",
+    label:
+      typeof record.label === "string" && record.label.trim() !== ""
+        ? record.label.trim()
+        : nodeId,
+    description:
+      typeof record.description === "string" ? record.description.trim() : "",
+    nodeId,
+    endpoint,
+    programPath,
+    seeds: Array.isArray(record.seeds)
+      ? record.seeds.filter((value) => typeof value === "string" && value.trim() !== "")
+      : [],
+    recommendedQuery:
+      typeof record.recommendedQuery === "string" ? record.recommendedQuery.trim() : "",
+    queryRole:
+      typeof record.queryRole === "string" && record.queryRole.trim() !== ""
+        ? record.queryRole.trim()
+        : "service",
+    managed: record.managed !== false
+  };
+}
+
+function loadNodePresets(presetFile) {
+  const raw = fs.readFileSync(presetFile, "utf8");
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    throw new Error(`preset file '${presetFile}' must contain a JSON array`);
+  }
+  const presetDir = path.dirname(presetFile);
+  return parsed.map((record) => normalizePreset(record, presetDir));
+}
+
+const nodePresets = loadNodePresets(options.presetFile);
 
 function createState(previous = null) {
   return {
@@ -224,12 +211,14 @@ function removeNode(nodeId) {
 function presetSummary(preset) {
   const managed = managedNodes.get(preset.id);
   const node = state.nodes.get(preset.nodeId);
-  const running = !!(
-    managed &&
-    managed.child &&
-    managed.child.exitCode == null &&
-    managed.stopping !== true
-  );
+  const running = preset.managed
+    ? !!(
+        managed &&
+        managed.child &&
+        managed.child.exitCode == null &&
+        managed.stopping !== true
+      )
+    : !!(node && node.kind === "node" && node.status !== "dead");
   return {
     id: preset.id,
     scenario: preset.scenario,
@@ -241,6 +230,7 @@ function presetSummary(preset) {
     seeds: preset.seeds.slice(),
     recommendedQuery: preset.recommendedQuery,
     queryRole: preset.queryRole,
+    managed: preset.managed,
     running,
     logPath: managed ? managed.logPath : "",
     pid: running
@@ -280,6 +270,9 @@ function broadcastSnapshot() {
 function ensureManagedNodesVisible() {
   const now = Date.now();
   for (const preset of nodePresets) {
+    if (!preset.managed) {
+      continue;
+    }
     const managed = managedNodes.get(preset.id);
     if (!managed) {
       continue;
@@ -672,6 +665,9 @@ async function startPresetNode(presetId) {
   if (preset == null) {
     throw new Error(`unknown preset '${presetId}'`);
   }
+  if (!preset.managed) {
+    throw new Error(`${preset.nodeId} is an observed preset and cannot be started locally`);
+  }
   {
     const existingNode = state.nodes.get(preset.nodeId);
     if (
@@ -797,6 +793,9 @@ async function stopPresetNode(presetId) {
   const now = Date.now();
   if (preset == null) {
     throw new Error(`unknown preset '${presetId}'`);
+  }
+  if (!preset.managed) {
+    throw new Error(`${preset.nodeId} is an observed preset and cannot be stopped locally`);
   }
   const managed = managedNodes.get(preset.id);
   if (!managed || !managed.child || managed.child.exitCode != null) {

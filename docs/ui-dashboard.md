@@ -37,6 +37,7 @@ Optional flags:
 
 - `--host HOST`
 - `--events-file PATH`
+- `--preset-file PATH`
 - `--keep-history`
 
 By default the server binds to `127.0.0.1`, listens on the port you provide,
@@ -54,6 +55,30 @@ Each UI-submitted query gets its own output directory with:
 - `chain/`
 - `query.stdout.txt`
 - `query.stderr.txt`
+
+## Extending The Node Catalog
+
+The launch/observe catalog is now loaded from:
+
+- [ui/node-presets.json](/Users/e35480/projects/misc/ETB/etb3/ui/node-presets.json)
+
+Each entry can describe either:
+
+- a locally managed node:
+  set `"managed": true` and provide `programPath`, `endpoint`, and any `seeds`
+- an observed-only node:
+  set `"managed": false` and provide `nodeId`, `endpoint`, and optional
+  descriptive metadata
+
+Locally managed presets can be started and stopped from the dashboard.
+Observed-only presets stay in the catalog for reference and query targeting, but
+the dashboard will not try to spawn them as local processes.
+
+If you want to use a different catalog file, start the UI with:
+
+```sh
+npm run ui -- --port 4090 --preset-file /absolute/path/to/node-presets.json
+```
 
 ## Recommended Workflow
 
@@ -102,6 +127,18 @@ important event classes are:
 
 The dashboard server watches the event file, exposes `/api/state`, and streams
 live updates over `/api/events` using server-sent events.
+
+Remote nodes on other machines can appear on the graph, but only when the
+dashboard learns about them through telemetry from the nodes it is already
+watching. In practice that means:
+
+- if a remote peer actually participates in the exchange and a watched ETB node
+  logs request traffic to or from that peer, it will show up on the graph
+- if a remote peer exists but never communicates with any node feeding this
+  dashboard, it will not appear yet
+
+So the current UI is telemetry-driven rather than globally discovery-driven.
+There is no separate cluster-wide dashboard registry yet.
 
 Repeated `announce` and `registry` chatter is intentionally collapsed so the
 activity view keeps the initial discovery handshakes but emphasizes the

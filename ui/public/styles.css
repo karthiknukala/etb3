@@ -687,6 +687,16 @@ select {
   gap: 10px;
 }
 
+.scroll-list {
+  max-height: 18rem;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.runtime-scroll-list {
+  max-height: 14rem;
+}
+
 .compact-row {
   display: grid;
   gap: 10px;

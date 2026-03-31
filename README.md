@@ -70,6 +70,9 @@ The dashboard also includes a control deck:
 - a query line that can send a live query to a running node such as `client` or
   `customer`
 - node launch buttons for the banking and visa example topologies
+- a scrollable node catalog loaded from
+  [ui/node-presets.json](/Users/e35480/projects/misc/ETB/etb3/ui/node-presets.json),
+  so you can extend the list without editing the dashboard server
 - a proof-check button that runs the bundled verifier on the most recent
   certificate/proof artifacts returned by the dashboard query
 - highlighted logic-hop entries so remote Datalog invocations stand out from

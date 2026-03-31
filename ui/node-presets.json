@@ -1,0 +1,80 @@
+[
+  {
+    "id": "banking-customer",
+    "scenario": "Banking",
+    "label": "Customer",
+    "description": "Customer-side node that asks the teller to authorize a withdrawal.",
+    "nodeId": "customer",
+    "endpoint": "127.0.0.1:8601",
+    "programPath": "../examples/live-banking/customer_node.etb",
+    "seeds": ["127.0.0.1:8602"],
+    "recommendedQuery": "cash_authorized(tx1001,alice,50)",
+    "queryRole": "primary",
+    "managed": true
+  },
+  {
+    "id": "banking-teller",
+    "scenario": "Banking",
+    "label": "Teller",
+    "description": "Bank teller node that issues the approval proof for the withdrawal.",
+    "nodeId": "teller",
+    "endpoint": "127.0.0.1:8602",
+    "programPath": "../examples/live-banking/teller_node.etb",
+    "seeds": ["127.0.0.1:8601"],
+    "recommendedQuery": "teller says approved(tx1001,alice,50)",
+    "queryRole": "service",
+    "managed": true
+  },
+  {
+    "id": "visa-client",
+    "scenario": "Visa",
+    "label": "Client",
+    "description": "Client node that asks the authority to coalesce the travel proof chain.",
+    "nodeId": "client",
+    "endpoint": "127.0.0.1:8701",
+    "programPath": "../examples/live-visa/client.etb",
+    "seeds": ["127.0.0.1:8702"],
+    "recommendedQuery": "trip_ready(alice)",
+    "queryRole": "primary",
+    "managed": true
+  },
+  {
+    "id": "visa-authority",
+    "scenario": "Visa",
+    "label": "Authority",
+    "description": "Authority node that coordinates payment and visa delegates.",
+    "nodeId": "authority",
+    "endpoint": "127.0.0.1:8702",
+    "programPath": "../examples/live-visa/authority.etb",
+    "seeds": [],
+    "recommendedQuery": "authority says travel_authorized(alice)",
+    "queryRole": "service",
+    "managed": true
+  },
+  {
+    "id": "visa-payment",
+    "scenario": "Visa",
+    "label": "Payment",
+    "description": "Payment delegate that proves the fee was cleared.",
+    "nodeId": "payment",
+    "endpoint": "127.0.0.1:8703",
+    "programPath": "../examples/live-visa/payment.etb",
+    "seeds": ["127.0.0.1:8702"],
+    "recommendedQuery": "payment says payment_cleared(alice)",
+    "queryRole": "service",
+    "managed": true
+  },
+  {
+    "id": "visa-visa",
+    "scenario": "Visa",
+    "label": "Visa Delegate",
+    "description": "Visa approval delegate that attests to the client's visa status.",
+    "nodeId": "visa",
+    "endpoint": "127.0.0.1:8704",
+    "programPath": "../examples/live-visa/visa.etb",
+    "seeds": ["127.0.0.1:8702"],
+    "recommendedQuery": "visa says visa_approved(alice)",
+    "queryRole": "service",
+    "managed": true
+  }
+]

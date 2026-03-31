@@ -618,6 +618,13 @@
 
     function renderPresetCard(preset) {
       const expanded = !!expandedPresetIds[preset.id];
+      const stateLabel = preset.managed
+        ? preset.running
+          ? "running"
+          : "stopped"
+        : preset.running
+          ? "observed"
+          : "catalog";
       return h(
         "article",
         {
@@ -636,8 +643,13 @@
               h("strong", null, preset.label),
               h(
                 "span",
-                { className: preset.running ? "compact-state is-running" : "compact-state" },
-                preset.running ? "running" : "stopped"
+                {
+                  className:
+                    preset.running || !preset.managed
+                      ? "compact-state is-running"
+                      : "compact-state"
+                },
+                stateLabel
               )
             ),
             h("p", { className: "compact-summary" }, `${preset.nodeId} · ${preset.endpoint}`)
@@ -660,12 +672,19 @@
               "button",
               {
                 type: "button",
-                className: preset.running ? "secondary-button compact" : "primary-button compact",
+                className:
+                  !preset.managed || preset.running
+                    ? "secondary-button compact"
+                    : "primary-button compact",
                 disabled:
+                  !preset.managed ||
                   controlBusy !== "" &&
                   controlBusy !== `start:${preset.id}` &&
                   controlBusy !== `stop:${preset.id}`,
                 onClick: function () {
+                  if (!preset.managed) {
+                    return;
+                  }
                   if (preset.running) {
                     handleStop(preset.id);
                   } else {
@@ -673,13 +692,15 @@
                   }
                 }
               },
-              controlBusy === `start:${preset.id}`
-                ? "Starting..."
-                : controlBusy === `stop:${preset.id}`
-                  ? "Stopping..."
-                  : preset.running
-                    ? "Stop"
-                    : "Start"
+              !preset.managed
+                ? "Observed"
+                : controlBusy === `start:${preset.id}`
+                  ? "Starting..."
+                  : controlBusy === `stop:${preset.id}`
+                    ? "Stopping..."
+                    : preset.running
+                      ? "Stop"
+                      : "Start"
             )
           )
         ),
@@ -688,7 +709,14 @@
               "div",
               { className: "compact-row-details" },
               h("p", { className: "node-meta" }, preset.description),
-              h("p", { className: "node-meta" }, preset.programPath),
+              preset.programPath ? h("p", { className: "node-meta" }, preset.programPath) : null,
+              h(
+                "p",
+                { className: "node-meta" },
+                preset.managed
+                  ? "control: locally managed by this dashboard"
+                  : "control: observed-only catalog entry"
+              ),
               preset.seeds && preset.seeds.length > 0
                 ? h("p", { className: "node-meta" }, `seeds: ${preset.seeds.join(", ")}`)
                 : h("p", { className: "node-meta" }, "seeds: none"),
@@ -964,7 +992,7 @@
             ),
             h(
               "div",
-              { className: "compact-list" },
+              { className: "compact-list scroll-list" },
               group.items.map(renderPresetCard)
             )
           )
@@ -979,7 +1007,11 @@
             h("span", { className: "section-count" }, `${snapshot.nodes.length} visible`)
           ),
           snapshot.nodes.length > 0
-            ? h("div", { className: "compact-list" }, snapshot.nodes.map(renderRuntimeNode))
+            ? h(
+                "div",
+                { className: "compact-list scroll-list runtime-scroll-list" },
+                snapshot.nodes.map(renderRuntimeNode)
+              )
             : h("div", { className: "empty-state compact-empty" }, "No nodes are visible yet.")
         )
       );
