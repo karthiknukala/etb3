@@ -19,6 +19,7 @@ const defaultControlDir = path.join(rootDir, ".etb", "ui-dashboard");
 const publicDir = path.join(__dirname, "public");
 const clients = new Set();
 const managedNodes = new Map();
+const seenDiscoveryRequests = new Set();
 
 const nodePresets = [
   {
@@ -152,6 +153,18 @@ function createState(previous = null) {
 let state = createState();
 let readOffset = 0;
 let partialLine = "";
+
+function discoveryKey(event) {
+  return [
+    event.op || "",
+    event.fromNodeId || event.fromEndpoint || "external",
+    event.toNodeId || event.toEndpoint || "unknown"
+  ].join("|");
+}
+
+function isDiscoveryEvent(event) {
+  return event && event.type === "request_received" && (event.op === "announce" || event.op === "registry");
+}
 
 function safeSegment(text) {
   return String(text || "")
@@ -302,12 +315,13 @@ async function ensureEventsFile() {
     state = createState();
     readOffset = 0;
     partialLine = "";
+    seenDiscoveryRequests.clear();
   }
 }
 
 function applyEvent(event) {
   if (!event || typeof event !== "object") {
-    return;
+    return false;
   }
   const ts = typeof event.ts === "number" ? event.ts : Date.now();
   switch (event.type) {
@@ -328,9 +342,16 @@ function applyEvent(event) {
         title: `${event.nodeId} is listening`,
         detail: event.endpoint || ""
       });
-      break;
+      return true;
     }
     case "request_received": {
+      if (isDiscoveryEvent(event)) {
+        const key = discoveryKey(event);
+        if (seenDiscoveryRequests.has(key)) {
+          return false;
+        }
+        seenDiscoveryRequests.add(key);
+      }
       const destination = ensureNode(event.toNodeId, {
         endpoint: event.toEndpoint || "",
         status: "alive",
@@ -358,11 +379,11 @@ function applyEvent(event) {
       addActivity({
         id: `${ts}:req:${event.toNodeId}:${event.op || "rpc"}`,
         ts,
-        kind: "request_received",
+        kind: event.op === "query" ? "request_query" : "request_received",
         title: `${source ? source.id : "unknown"} -> ${destination ? destination.id : "unknown"}`,
         detail: event.query || event.principal || event.op || "rpc"
       });
-      break;
+      return true;
     }
     case "query_started": {
       const node = ensureNode(event.nodeId, {
@@ -379,7 +400,7 @@ function applyEvent(event) {
         title: `${node ? node.id : event.nodeId} started query`,
         detail: event.query || ""
       });
-      break;
+      return true;
     }
     case "query_finished": {
       const node = ensureNode(event.nodeId, {
@@ -404,7 +425,7 @@ function applyEvent(event) {
           ? `${event.answerCount || 0} answers, ${event.bundleCount || 0} bundles`
           : event.error || "query failed"
       });
-      break;
+      return true;
     }
     case "bundle_imported": {
       ensureNode(event.nodeId, {
@@ -426,17 +447,36 @@ function applyEvent(event) {
           ? `from ${event.sourceNodeId}${event.query ? ` for ${event.query}` : ""}`
           : event.query || ""
       });
-      break;
+      return true;
+    }
+    case "logic_invoke": {
+      ensureNode(event.nodeId, {
+        status: "alive",
+        kind: "node",
+        lastSeenAt: ts
+      });
+      addActivity({
+        id: `${ts}:logic:${event.nodeId}:${event.targetPrincipal || "remote"}`,
+        ts,
+        kind: "logic_invoke",
+        title: `${event.nodeId} invoked a remote Datalog goal`,
+        detail:
+          event.goal ||
+          (event.targetPrincipal
+            ? `${event.targetPrincipal}${event.targetEndpoint ? ` @ ${event.targetEndpoint}` : ""}`
+            : event.targetEndpoint || "remote invocation")
+      });
+      return true;
     }
     case "node_status": {
       ensureNode(event.nodeId, {
         status: event.status || "unknown",
         lastSeenAt: ts
       });
-      break;
+      return true;
     }
     default:
-      break;
+      return false;
   }
 }
 
@@ -470,6 +510,7 @@ async function readNewEvents() {
     readOffset = 0;
     partialLine = "";
     state = createState(previous);
+    seenDiscoveryRequests.clear();
     ensureManagedNodesVisible();
     broadcast({ type: "snapshot_reset", state: serializeState() });
   }
@@ -492,8 +533,9 @@ async function readNewEvents() {
     }
     try {
       const event = JSON.parse(trimmed);
-      applyEvent(event);
-      broadcast(event);
+      if (applyEvent(event)) {
+        broadcast(event);
+      }
     } catch {
       console.warn(`failed to parse telemetry line: ${trimmed}`);
     }
@@ -649,7 +691,7 @@ async function startPresetNode(presetId) {
   await ensureControlDirectories();
 
   const logPath = path.join(logsDir, `${preset.id}.log`);
-  const logStream = fs.createWriteStream(logPath, { flags: "a" });
+  const logStream = fs.createWriteStream(logPath, { flags: "w" });
   const args = [
     "serve",
     preset.programPath,

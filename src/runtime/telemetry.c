@@ -291,3 +291,24 @@ void etb_telemetry_emit_bundle_imported(const char *node_id,
   (void)etb_json_append_char(buffer, sizeof(buffer), &used, '}');
   etb_telemetry_write_line(buffer);
 }
+
+void etb_telemetry_emit_logic_invoke(const char *node_id,
+                                     const char *goal_text,
+                                     const char *target_principal,
+                                     const char *target_endpoint) {
+  char buffer[8192];
+  size_t used;
+  bool first;
+  etb_telemetry_emit_common_prefix(buffer, sizeof(buffer), &used, &first,
+                                   "logic_invoke");
+  (void)etb_json_append_string_field(buffer, sizeof(buffer), &used, &first,
+                                     "nodeId", node_id);
+  (void)etb_json_append_string_field(buffer, sizeof(buffer), &used, &first,
+                                     "goal", goal_text);
+  (void)etb_json_append_string_field(buffer, sizeof(buffer), &used, &first,
+                                     "targetPrincipal", target_principal);
+  (void)etb_json_append_string_field(buffer, sizeof(buffer), &used, &first,
+                                     "targetEndpoint", target_endpoint);
+  (void)etb_json_append_char(buffer, sizeof(buffer), &used, '}');
+  etb_telemetry_write_line(buffer);
+}

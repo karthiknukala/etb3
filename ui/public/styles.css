@@ -109,6 +109,12 @@ body {
   grid-template-columns: minmax(0, 1.45fr) minmax(340px, 0.95fr);
 }
 
+.main-column {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
 .graph-panel,
 .card {
   padding: 18px;
@@ -325,6 +331,13 @@ body {
   font: 500 14px/1.4 "IBM Plex Mono", "SFMono-Regular", monospace;
 }
 
+.field-hint {
+  color: var(--text-soft);
+  font: 500 12px/1.4 "IBM Plex Mono", "SFMono-Regular", monospace;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .cli-shell {
   display: grid;
   gap: 10px;
@@ -443,6 +456,9 @@ body {
 .activity-list {
   display: grid;
   gap: 12px;
+  max-height: 28rem;
+  overflow-y: auto;
+  padding-right: 6px;
 }
 
 .node-card {
@@ -506,10 +522,30 @@ body {
   align-items: start;
   padding: 10px 0;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 3px solid transparent;
+  padding-left: 10px;
 }
 
 .activity-row:first-child {
   border-top: 0;
+}
+
+.activity-logic {
+  border-left-color: rgba(86, 214, 185, 0.88);
+  background: rgba(86, 214, 185, 0.06);
+  border-radius: 12px;
+}
+
+.activity-transport {
+  border-left-color: rgba(124, 161, 255, 0.72);
+  background: rgba(124, 161, 255, 0.05);
+  border-radius: 12px;
+}
+
+.activity-error {
+  border-left-color: rgba(255, 122, 115, 0.88);
+  background: rgba(255, 122, 115, 0.07);
+  border-radius: 12px;
 }
 
 .activity-time {

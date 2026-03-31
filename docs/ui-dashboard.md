@@ -13,6 +13,8 @@ interactive control deck.
 - a launch catalog for the banking and visa example nodes
 - a small command line pane for sending live ETB queries
 - proof verification status for the most recent dashboard query
+- highlighted logic-hop events for remote Datalog invocations
+- scrollable activity and node panes so the dashboard stays readable during long runs
 
 Communication events are drawn as animated dots travelling between nodes in the
 browser.
@@ -100,6 +102,10 @@ important event classes are:
 
 The dashboard server watches the event file, exposes `/api/state`, and streams
 live updates over `/api/events` using server-sent events.
+
+Repeated `announce` and `registry` chatter is intentionally collapsed so the
+activity view keeps the initial discovery handshakes but emphasizes the
+query-time Datalog path.
 
 The control deck talks to additional local endpoints exposed by the UI server:
 

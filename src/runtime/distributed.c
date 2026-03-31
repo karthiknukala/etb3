@@ -27,6 +27,19 @@
 
 extern char **environ;
 
+static volatile sig_atomic_t etb_shutdown_requested = 0;
+static pid_t etb_discovery_child_pid = -1;
+static int etb_listen_fd_for_signal = -1;
+
+static void etb_handle_shutdown_signal(int signo) {
+  (void)signo;
+  etb_shutdown_requested = 1;
+  if (etb_listen_fd_for_signal >= 0) {
+    close(etb_listen_fd_for_signal);
+    etb_listen_fd_for_signal = -1;
+  }
+}
+
 typedef struct etb_string_list {
   char **items;
   size_t count;
@@ -677,12 +690,30 @@ static bool etb_run_prover_command(const char *prover_path, const char *command,
                                    size_t error_size) {
   pid_t pid;
   int status;
+  posix_spawn_file_actions_t actions;
+  int null_fd;
   char *const argv[] = {(char *)prover_path, (char *)command, (char *)cert_path,
                         (char *)proof_path, NULL};
-  if (posix_spawn(&pid, prover_path, NULL, NULL, argv, environ) != 0) {
+  null_fd = open("/dev/null", O_WRONLY);
+  if (null_fd < 0) {
+    snprintf(error, error_size, "failed to prepare prover stdio");
+    return false;
+  }
+  if (posix_spawn_file_actions_init(&actions) != 0) {
+    close(null_fd);
+    snprintf(error, error_size, "failed to prepare prover actions");
+    return false;
+  }
+  (void)posix_spawn_file_actions_adddup2(&actions, null_fd, STDOUT_FILENO);
+  (void)posix_spawn_file_actions_adddup2(&actions, null_fd, STDERR_FILENO);
+  if (posix_spawn(&pid, prover_path, &actions, NULL, argv, environ) != 0) {
+    posix_spawn_file_actions_destroy(&actions);
+    close(null_fd);
     snprintf(error, error_size, "failed to launch prover %s", prover_path);
     return false;
   }
+  posix_spawn_file_actions_destroy(&actions);
+  close(null_fd);
   if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) ||
       WEXITSTATUS(status) != 0) {
     snprintf(error, error_size, "prover command '%s' failed", command);
@@ -1597,6 +1628,8 @@ static bool etb_resolve_clause_dependencies(const etb_node_context *context,
         return false;
       }
       if (!etb_string_list_contains(fetched_queries, remote_query)) {
+        etb_telemetry_emit_logic_invoke(context->node_id, remote_query,
+                                        instantiated.principal, endpoint);
         if (!etb_remote_query(endpoint, remote_query, &remote_bundles, error,
                               error_size)) {
           free(remote_query);
@@ -1967,18 +2000,50 @@ done:
 }
 
 static void etb_discovery_announce_loop(const etb_node_context *context) {
-  for (;;) {
-    size_t index;
+  size_t index;
+  size_t attempts = 0U;
+  const size_t max_attempts = 20U;
+  bool *announced;
+  bool *pulled;
+
+  if (context->seeds == NULL || context->seeds->count == 0U) {
+    return;
+  }
+  announced = (bool *)calloc(context->seeds->count, sizeof(bool));
+  pulled = (bool *)calloc(context->seeds->count, sizeof(bool));
+  if (announced == NULL || pulled == NULL) {
+    free(announced);
+    free(pulled);
+    return;
+  }
+  while (!etb_shutdown_requested && attempts < max_attempts) {
+    size_t completed = 0U;
     for (index = 0U; index < context->seeds->count; ++index) {
       char error[256];
       memset(error, 0, sizeof(error));
-      (void)etb_discovery_sync_with_seed(context, context->seeds->items[index],
-                                         error, sizeof(error));
-      (void)etb_discovery_pull_from_seed(context, context->seeds->items[index],
-                                         error, sizeof(error));
+      if (!announced[index] &&
+          etb_discovery_sync_with_seed(context, context->seeds->items[index],
+                                       error, sizeof(error))) {
+        announced[index] = true;
+      }
+      memset(error, 0, sizeof(error));
+      if (!pulled[index] &&
+          etb_discovery_pull_from_seed(context, context->seeds->items[index],
+                                       error, sizeof(error))) {
+        pulled[index] = true;
+      }
+      if (announced[index] && pulled[index]) {
+        completed += 1U;
+      }
     }
+    if (completed == context->seeds->count) {
+      break;
+    }
+    attempts += 1U;
     sleep(1);
   }
+  free(announced);
+  free(pulled);
 }
 
 bool etb_node_serve(const char *node_id, const char *program_path,
@@ -2023,15 +2088,29 @@ bool etb_node_serve(const char *node_id, const char *program_path,
     etb_peer_route_map_free(&context.local_routes);
     return false;
   }
+  etb_shutdown_requested = 0;
+  etb_discovery_child_pid = -1;
+  etb_listen_fd_for_signal = listen_fd;
+  {
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = etb_handle_shutdown_signal;
+    sigemptyset(&action.sa_mask);
+    (void)sigaction(SIGTERM, &action, NULL);
+    (void)sigaction(SIGINT, &action, NULL);
+  }
   (void)signal(SIGCHLD, SIG_IGN);
   announcer_pid = -1;
   if (seeds != NULL && seeds->count > 0U) {
     announcer_pid = fork();
     if (announcer_pid == 0) {
+      (void)signal(SIGTERM, SIG_DFL);
+      (void)signal(SIGINT, SIG_DFL);
       close(listen_fd);
       etb_discovery_announce_loop(&context);
       _exit(0);
     }
+    etb_discovery_child_pid = announcer_pid;
   }
   printf("etbd[%s] listening on %s\n", node_id, listen_endpoint);
   fflush(stdout);
@@ -2041,9 +2120,18 @@ bool etb_node_serve(const char *node_id, const char *program_path,
     int client_fd = accept(listen_fd, NULL, NULL);
     if (client_fd < 0) {
       if (errno == EINTR) {
+        if (etb_shutdown_requested) {
+          break;
+        }
         continue;
       }
+      if ((errno == EBADF || errno == EINVAL) && etb_shutdown_requested) {
+        break;
+      }
       snprintf(error, error_size, "accept failed");
+      if (etb_discovery_child_pid > 0) {
+        (void)kill(etb_discovery_child_pid, SIGTERM);
+      }
       close(listen_fd);
       return false;
     }
@@ -2058,4 +2146,10 @@ bool etb_node_serve(const char *node_id, const char *program_path,
       close(client_fd);
     }
   }
+  if (etb_discovery_child_pid > 0) {
+    (void)kill(etb_discovery_child_pid, SIGTERM);
+  }
+  etb_listen_fd_for_signal = -1;
+  close(listen_fd);
+  return true;
 }

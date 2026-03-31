@@ -30,4 +30,9 @@ void etb_telemetry_emit_bundle_imported(const char *node_id,
                                         const char *source_node_id,
                                         const char *query_text);
 
+void etb_telemetry_emit_logic_invoke(const char *node_id,
+                                     const char *goal_text,
+                                     const char *target_principal,
+                                     const char *target_endpoint);
+
 #endif

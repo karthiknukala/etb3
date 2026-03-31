@@ -179,9 +179,9 @@ client_pid=$!
 verbose_note "client_pid=$client_pid"
 
 verbose_note "sleeping for discovery bootstrap"
-sleep 2
+sleep 3
 
-query_out="$(run_capture_retry 5 1 "$BUILD_DIR/etbctl" query "127.0.0.1:$CLIENT_PORT" \
+query_out="$(run_capture_retry 10 1 "$BUILD_DIR/etbctl" query "127.0.0.1:$CLIENT_PORT" \
   'trip_ready(alice)' \
   --cert-out "$tmpdir/client-top.cert.cbor" \
   --proof-out "$tmpdir/client-top.proof" \

@@ -72,6 +72,8 @@ The dashboard also includes a control deck:
 - node launch buttons for the banking and visa example topologies
 - a proof-check button that runs the bundled verifier on the most recent
   certificate/proof artifacts returned by the dashboard query
+- highlighted logic-hop entries so remote Datalog invocations stand out from
+  seed-discovery traffic
 
 The UI persists its own logs and query artifacts under:
 

@@ -24,6 +24,32 @@
     return "alive";
   }
 
+  function activityTone(entry) {
+    if (!entry) {
+      return "neutral";
+    }
+    if (
+      entry.kind === "logic_invoke" ||
+      entry.kind === "query_started" ||
+      entry.kind === "query_finished" ||
+      entry.kind === "bundle_imported" ||
+      entry.kind === "request_query" ||
+      entry.kind === "control_query" ||
+      entry.kind === "control_query_ok" ||
+      entry.kind === "control_query_failed" ||
+      entry.kind === "control_verify"
+    ) {
+      return "logic";
+    }
+    if (entry.kind === "node_exit") {
+      return "error";
+    }
+    if (entry.kind === "request_received") {
+      return "transport";
+    }
+    return "neutral";
+  }
+
   function normalizeSnapshot(snapshot) {
     return {
       startedAt: snapshot.startedAt || Date.now(),
@@ -147,7 +173,7 @@
         {
           id: `${event.ts}:req:${event.toNodeId}`,
           ts: event.ts,
-          kind: "request_received",
+          kind: event.op === "query" ? "request_query" : "request_received",
           title: `${event.fromNodeId || "external"} -> ${event.toNodeId || "node"}`,
           detail: event.query || event.principal || event.op || "rpc"
         },
@@ -227,6 +253,25 @@
       return next;
     }
 
+    if (event.type === "logic_invoke") {
+      next.activity = pushFront(
+        next.activity,
+        {
+          id: `${event.ts}:logic:${event.nodeId}:${event.targetPrincipal || "remote"}`,
+          ts: event.ts,
+          kind: "logic_invoke",
+          title: `${event.nodeId} invoked a remote Datalog goal`,
+          detail:
+            event.goal ||
+            (event.targetPrincipal
+              ? `${event.targetPrincipal}${event.targetEndpoint ? ` @ ${event.targetEndpoint}` : ""}`
+              : event.targetEndpoint || "remote invocation")
+        },
+        120
+      );
+      return next;
+    }
+
     if (event.type === "node_status") {
       next.nodes = upsertNode(next.nodes, {
         id: event.nodeId,
@@ -274,6 +319,36 @@
       }
     }
     return live.length > 0 ? live[0].id : "";
+  }
+
+  function queryTargets(nodes, catalog) {
+    const map = {};
+    nodes.forEach((node) => {
+      if (node.kind === "node" && node.status !== "dead") {
+        map[node.id] = node;
+      }
+    });
+    catalog.forEach((preset) => {
+      if (!preset.running) {
+        return;
+      }
+      if (!map[preset.nodeId]) {
+        map[preset.nodeId] = {
+          id: preset.nodeId,
+          endpoint: preset.endpoint || "",
+          programPath: preset.programPath || "",
+          pid: preset.pid || null,
+          status: "starting",
+          kind: "node",
+          busy: false,
+          currentQuery: "",
+          lastResult: null,
+          lastSeenAt: Date.now(),
+          startedAt: null
+        };
+      }
+    });
+    return Object.values(map).sort((lhs, rhs) => lhs.id.localeCompare(rhs.id));
   }
 
   function apiJson(url, body) {
@@ -352,13 +427,6 @@
       setPulses((current) => current.filter((pulse) => now - pulse.ts < 1700));
     }, [now]);
 
-    useEffect(() => {
-      const preferred = preferredQueryNode(snapshot.nodes);
-      if (!selectedNodeId || !snapshot.nodes.some((node) => node.id === selectedNodeId && node.status !== "dead")) {
-        setSelectedNodeId(preferred);
-      }
-    }, [snapshot.nodes, selectedNodeId]);
-
     const presetByNode = useMemo(() => {
       const map = {};
       snapshot.catalog.forEach((preset) => {
@@ -367,24 +435,24 @@
       return map;
     }, [snapshot.catalog]);
 
-    useEffect(() => {
-      if (!selectedNodeId || queryText.trim() !== "") {
-        return;
-      }
-      const preset = presetByNode[selectedNodeId];
-      if (preset && preset.recommendedQuery) {
-        setQueryText(preset.recommendedQuery);
-      }
-    }, [selectedNodeId, presetByNode, queryText]);
-
     const layout = useMemo(() => graphLayout(snapshot.nodes, 980, 680), [snapshot.nodes]);
     const liveTargets = useMemo(
       () => snapshot.nodes.filter((node) => node.kind === "node" && node.status !== "dead"),
       [snapshot.nodes]
     );
+    const selectableTargets = useMemo(
+      () => queryTargets(snapshot.nodes, snapshot.catalog),
+      [snapshot.nodes, snapshot.catalog]
+    );
+    useEffect(() => {
+      const preferred = preferredQueryNode(selectableTargets);
+      if (!selectedNodeId || !selectableTargets.some((node) => node.id === selectedNodeId)) {
+        setSelectedNodeId(preferred);
+      }
+    }, [selectableTargets, selectedNodeId]);
     const selectedNode = useMemo(
-      () => liveTargets.find((node) => node.id === selectedNodeId) || null,
-      [liveTargets, selectedNodeId]
+      () => selectableTargets.find((node) => node.id === selectedNodeId) || null,
+      [selectableTargets, selectedNodeId]
     );
     const selectedPreset = selectedNode ? presetByNode[selectedNode.id] : null;
 
@@ -521,69 +589,95 @@
         { className: "dashboard-grid" },
         h(
           "section",
-          { className: "graph-panel" },
-          h("div", { className: "panel-heading" }, h("h2", null, "Topology"), h("p", null, "Dots animate on incoming communication events.")),
+          { className: "main-column" },
           h(
-            "svg",
-            { className: "network-canvas", viewBox: "0 0 980 680" },
-            h("defs", null,
-              h("radialGradient", { id: "panelGlow" },
-                h("stop", { offset: "0%", stopColor: "rgba(255,255,255,0.22)" }),
-                h("stop", { offset: "100%", stopColor: "rgba(255,255,255,0)" })
+            "div",
+            { className: "graph-panel" },
+            h("div", { className: "panel-heading" }, h("h2", null, "Topology"), h("p", null, "Dots animate on incoming communication events.")),
+            h(
+              "svg",
+              { className: "network-canvas", viewBox: "0 0 980 680" },
+              h("defs", null,
+                h("radialGradient", { id: "panelGlow" },
+                  h("stop", { offset: "0%", stopColor: "rgba(255,255,255,0.22)" }),
+                  h("stop", { offset: "100%", stopColor: "rgba(255,255,255,0)" })
+                )
+              ),
+              h("rect", { x: 0, y: 0, width: 980, height: 680, fill: "url(#panelGlow)" }),
+              edges.map((edge) => {
+                const from = layout[edge.fromNodeId];
+                const to = layout[edge.toNodeId];
+                if (!from || !to) {
+                  return null;
+                }
+                return h("line", {
+                  key: edge.key,
+                  x1: from.x,
+                  y1: from.y,
+                  x2: to.x,
+                  y2: to.y,
+                  className: "edge-line"
+                });
+              }),
+              pulses.map((pulse) => {
+                const from = layout[pulse.fromNodeId];
+                const to = layout[pulse.toNodeId];
+                if (!from || !to) {
+                  return null;
+                }
+                const progress = Math.max(0, Math.min(1, (now - pulse.ts) / 1500));
+                const x = from.x + (to.x - from.x) * progress;
+                const y = from.y + (to.y - from.y) * progress;
+                return h(
+                  "g",
+                  { key: pulse.id },
+                  h("circle", { cx: x, cy: y, r: 7, className: "pulse-dot" }),
+                  progress < 0.9
+                    ? h("text", { x: x + 12, y: y - 10, className: "pulse-label" }, pulse.label)
+                    : null
+                );
+              }),
+              snapshot.nodes.map((node) => {
+                const position = layout[node.id];
+                if (!position) {
+                  return null;
+                }
+                const tone = statusTone(node);
+                return h(
+                  "g",
+                  { key: node.id, transform: `translate(${position.x}, ${position.y})` },
+                  h("circle", { r: node.kind === "external" ? 38 : 50, className: `node-core node-${tone}` }),
+                  h("circle", { r: node.kind === "external" ? 52 : 66, className: "node-halo" }),
+                  h("text", { y: -6, className: "node-title", textAnchor: "middle" }, node.id),
+                  h("text", { y: 16, className: "node-subtitle", textAnchor: "middle" }, node.endpoint || node.status),
+                  node.currentQuery
+                    ? h("text", { y: 58, className: "node-query", textAnchor: "middle" }, node.currentQuery)
+                    : null
+                );
+              })
+            )
+          ),
+          h(
+            "div",
+            { className: "card" },
+            h("div", { className: "panel-heading" }, h("h2", null, "Activity"), h("p", null, "Most recent lifecycle and transaction events.")),
+            h(
+              "div",
+              { className: "activity-list" },
+              snapshot.activity.map((entry) =>
+                h(
+                  "article",
+                  { key: entry.id, className: `activity-row activity-${activityTone(entry)}` },
+                  h("span", { className: "activity-time" }, formatTime(entry.ts)),
+                  h(
+                    "div",
+                    { className: "activity-copy" },
+                    h("strong", null, entry.title),
+                    h("p", null, entry.detail)
+                  )
+                )
               )
-            ),
-            h("rect", { x: 0, y: 0, width: 980, height: 680, fill: "url(#panelGlow)" }),
-            edges.map((edge) => {
-              const from = layout[edge.fromNodeId];
-              const to = layout[edge.toNodeId];
-              if (!from || !to) {
-                return null;
-              }
-              return h("line", {
-                key: edge.key,
-                x1: from.x,
-                y1: from.y,
-                x2: to.x,
-                y2: to.y,
-                className: "edge-line"
-              });
-            }),
-            pulses.map((pulse) => {
-              const from = layout[pulse.fromNodeId];
-              const to = layout[pulse.toNodeId];
-              if (!from || !to) {
-                return null;
-              }
-              const progress = Math.max(0, Math.min(1, (now - pulse.ts) / 1500));
-              const x = from.x + (to.x - from.x) * progress;
-              const y = from.y + (to.y - from.y) * progress;
-              return h(
-                "g",
-                { key: pulse.id },
-                h("circle", { cx: x, cy: y, r: 7, className: "pulse-dot" }),
-                progress < 0.9
-                  ? h("text", { x: x + 12, y: y - 10, className: "pulse-label" }, pulse.label)
-                  : null
-              );
-            }),
-            snapshot.nodes.map((node) => {
-              const position = layout[node.id];
-              if (!position) {
-                return null;
-              }
-              const tone = statusTone(node);
-              return h(
-                "g",
-                { key: node.id, transform: `translate(${position.x}, ${position.y})` },
-                h("circle", { r: node.kind === "external" ? 38 : 50, className: `node-core node-${tone}` }),
-                h("circle", { r: node.kind === "external" ? 52 : 66, className: "node-halo" }),
-                h("text", { y: -6, className: "node-title", textAnchor: "middle" }, node.id),
-                h("text", { y: 16, className: "node-subtitle", textAnchor: "middle" }, node.endpoint || node.status),
-                node.currentQuery
-                  ? h("text", { y: 58, className: "node-query", textAnchor: "middle" }, node.currentQuery)
-                  : null
-              );
-            })
+            )
           )
         ),
         h(
@@ -639,14 +733,11 @@
                           value: selectedNodeId,
                           onChange: function (event) {
                             setSelectedNodeId(event.target.value);
-                            if (presetByNode[event.target.value] && presetByNode[event.target.value].recommendedQuery) {
-                              setQueryText(presetByNode[event.target.value].recommendedQuery);
-                            }
                           }
                         },
-                        liveTargets.length === 0
+                        selectableTargets.length === 0
                           ? h("option", { value: "" }, "Start a node first")
-                          : liveTargets.map((node) =>
+                          : selectableTargets.map((node) =>
                               h("option", { key: node.id, value: node.id }, `${node.id} (${node.endpoint})`)
                             )
                       )
@@ -670,7 +761,14 @@
                           onChange: function (event) {
                             setQueryText(event.target.value);
                           }
-                        })
+                        }),
+                        selectedPreset && selectedPreset.recommendedQuery
+                          ? h(
+                              "span",
+                              { className: "field-hint" },
+                              `Suggested: ${selectedPreset.recommendedQuery}`
+                            )
+                          : null
                       )
                     ),
                     h(
@@ -754,7 +852,9 @@
                     : h(
                         "div",
                         { className: "empty-state" },
-                        "No dashboard query has been run yet. Start a client or customer node, then send a query from this pane."
+                        selectableTargets.length > 0
+                          ? `Ready to query ${selectedNodeId || "a live node"}. Send a command above and the certificate/proof paths will appear here.`
+                          : "No dashboard query has been run yet. Start a client or customer node, then send a query from this pane."
                       )
                 )
               : h(
@@ -843,28 +943,6 @@
                           : node.lastResult.error || "query failed"
                       )
                     : null
-                )
-              )
-            )
-          ),
-          h(
-            "div",
-            { className: "card" },
-            h("div", { className: "panel-heading" }, h("h2", null, "Activity"), h("p", null, "Most recent lifecycle and transaction events.")),
-            h(
-              "div",
-              { className: "activity-list" },
-              snapshot.activity.map((entry) =>
-                h(
-                  "article",
-                  { key: entry.id, className: "activity-row" },
-                  h("span", { className: "activity-time" }, formatTime(entry.ts)),
-                  h(
-                    "div",
-                    { className: "activity-copy" },
-                    h("strong", null, entry.title),
-                    h("p", null, entry.detail)
-                  )
                 )
               )
             )
