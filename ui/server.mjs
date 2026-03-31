@@ -214,6 +214,13 @@ function ensureNode(nodeId, extras = {}) {
   return node;
 }
 
+function removeNode(nodeId) {
+  if (!nodeId) {
+    return;
+  }
+  state.nodes.delete(nodeId);
+}
+
 function presetSummary(preset) {
   const managed = managedNodes.get(preset.id);
   const node = state.nodes.get(preset.nodeId);
@@ -747,12 +754,20 @@ async function startPresetNode(presetId) {
     if (managed && managed.logStream) {
       managed.logStream.end();
     }
-    ensureNode(preset.nodeId, {
-      status: "dead",
-      busy: false,
-      currentQuery: "",
-      lastSeenAt: ts
-    });
+    if (managed && managed.stopping) {
+      removeNode(preset.nodeId);
+      managedNodes.delete(preset.id);
+    } else {
+      ensureNode(preset.nodeId, {
+        status: "dead",
+        busy: false,
+        currentQuery: "",
+        lastSeenAt: ts
+      });
+      if (managed) {
+        managedNodes.delete(preset.id);
+      }
+    }
     addActivity({
       id: `${ts}:exit:${preset.nodeId}`,
       ts,
@@ -785,6 +800,8 @@ async function stopPresetNode(presetId) {
   }
   const managed = managedNodes.get(preset.id);
   if (!managed || !managed.child || managed.child.exitCode != null) {
+    removeNode(preset.nodeId);
+    managedNodes.delete(preset.id);
     return {
       ok: true,
       message: `${preset.nodeId} is not running`

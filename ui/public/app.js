@@ -292,7 +292,7 @@
 
     regular.forEach((node, index) => {
       const angle = -Math.PI / 2 + (index * (Math.PI * 2)) / Math.max(regular.length, 1);
-      const radius = Math.min(width, height) * 0.3;
+      const radius = Math.min(width, height) * 0.32;
       positions[node.id] = {
         x: width / 2 + Math.cos(angle) * radius,
         y: height / 2 + Math.sin(angle) * radius
@@ -302,7 +302,7 @@
     external.forEach((node, index) => {
       positions[node.id] = {
         x: 110,
-        y: 120 + index * 110
+        y: 120 + index * 104
       };
     });
 
@@ -370,6 +370,15 @@
     );
   }
 
+  function MetricChip(label, value) {
+    return h(
+      "div",
+      { className: "stat-chip", key: label },
+      h("span", { className: "stat-label" }, label),
+      h("strong", { className: "stat-value" }, value)
+    );
+  }
+
   function Dashboard() {
     const [snapshot, setSnapshot] = useState(
       normalizeSnapshot({
@@ -391,6 +400,15 @@
     const [controlBusy, setControlBusy] = useState("");
     const [controlError, setControlError] = useState("");
     const [controlNote, setControlNote] = useState("");
+    const [sidebarOpen, setSidebarOpen] = useState(true);
+    const [activityOpen, setActivityOpen] = useState(false);
+    const [expandedPresetIds, setExpandedPresetIds] = useState({});
+    const [expandedNodeIds, setExpandedNodeIds] = useState({});
+    const [expandedResultIds, setExpandedResultIds] = useState({
+      artifacts: true,
+      answers: false,
+      verification: true
+    });
 
     useEffect(() => {
       fetch("/api/state")
@@ -435,7 +453,7 @@
       return map;
     }, [snapshot.catalog]);
 
-    const layout = useMemo(() => graphLayout(snapshot.nodes, 980, 680), [snapshot.nodes]);
+    const layout = useMemo(() => graphLayout(snapshot.nodes, 1180, 760), [snapshot.nodes]);
     const liveTargets = useMemo(
       () => snapshot.nodes.filter((node) => node.kind === "node" && node.status !== "dead"),
       [snapshot.nodes]
@@ -444,12 +462,14 @@
       () => queryTargets(snapshot.nodes, snapshot.catalog),
       [snapshot.nodes, snapshot.catalog]
     );
+
     useEffect(() => {
       const preferred = preferredQueryNode(selectableTargets);
       if (!selectedNodeId || !selectableTargets.some((node) => node.id === selectedNodeId)) {
         setSelectedNodeId(preferred);
       }
     }, [selectableTargets, selectedNodeId]);
+
     const selectedNode = useMemo(
       () => selectableTargets.find((node) => node.id === selectedNodeId) || null,
       [selectableTargets, selectedNodeId]
@@ -458,7 +478,7 @@
 
     const edges = useMemo(() => {
       const unique = new Map();
-      snapshot.messages.slice(0, 40).forEach((message) => {
+      snapshot.messages.slice(0, 60).forEach((message) => {
         if (!message.fromNodeId || !message.toNodeId || message.fromNodeId === message.toNodeId) {
           return;
         }
@@ -489,6 +509,17 @@
           items: groups[scenario].sort((lhs, rhs) => lhs.label.localeCompare(rhs.label))
         }));
     }, [snapshot.catalog]);
+
+    const runningPresetCount = snapshot.catalog.filter((preset) => preset.running).length;
+    const latestActivity = snapshot.activity.length > 0 ? snapshot.activity[0] : null;
+
+    function toggleMapEntry(setter, key) {
+      setter((current) =>
+        Object.assign({}, current, {
+          [key]: !current[key]
+        })
+      );
+    }
 
     async function refreshFromResponse(promise) {
       setControlError("");
@@ -540,7 +571,7 @@
           })
         );
         if (ok) {
-          setControlNote("Query finished. The certificate and proof paths are listed below.");
+          setControlNote("Query finished. Open the artifact drawers below to inspect the certificate and proof paths.");
         }
       } finally {
         setControlBusy("");
@@ -559,51 +590,491 @@
       }
     }
 
+    function renderDisclosure(id, title, summary, children) {
+      const open = !!expandedResultIds[id];
+      return h(
+        "section",
+        { className: open ? "disclosure-panel is-open" : "disclosure-panel" },
+        h(
+          "button",
+          {
+            type: "button",
+            className: "disclosure-toggle",
+            onClick: function () {
+              toggleMapEntry(setExpandedResultIds, id);
+            }
+          },
+          h(
+            "div",
+            { className: "disclosure-toggle-copy" },
+            h("span", { className: "disclosure-kicker" }, title),
+            h("strong", { className: "disclosure-title" }, summary)
+          ),
+          h("span", { className: "disclosure-chevron" }, open ? "Hide" : "Show")
+        ),
+        open ? h("div", { className: "disclosure-body" }, children) : null
+      );
+    }
+
+    function renderPresetCard(preset) {
+      const expanded = !!expandedPresetIds[preset.id];
+      return h(
+        "article",
+        {
+          key: preset.id,
+          className: expanded ? "compact-row is-expanded" : "compact-row"
+        },
+        h(
+          "div",
+          { className: "compact-row-head" },
+          h(
+            "div",
+            { className: "compact-row-copy" },
+            h(
+              "div",
+              { className: "compact-title-row" },
+              h("strong", null, preset.label),
+              h(
+                "span",
+                { className: preset.running ? "compact-state is-running" : "compact-state" },
+                preset.running ? "running" : "stopped"
+              )
+            ),
+            h("p", { className: "compact-summary" }, `${preset.nodeId} · ${preset.endpoint}`)
+          ),
+          h(
+            "div",
+            { className: "compact-actions" },
+            h(
+              "button",
+              {
+                type: "button",
+                className: "secondary-button compact",
+                onClick: function () {
+                  toggleMapEntry(setExpandedPresetIds, preset.id);
+                }
+              },
+              expanded ? "Hide" : "Details"
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: preset.running ? "secondary-button compact" : "primary-button compact",
+                disabled:
+                  controlBusy !== "" &&
+                  controlBusy !== `start:${preset.id}` &&
+                  controlBusy !== `stop:${preset.id}`,
+                onClick: function () {
+                  if (preset.running) {
+                    handleStop(preset.id);
+                  } else {
+                    handleStart(preset.id);
+                  }
+                }
+              },
+              controlBusy === `start:${preset.id}`
+                ? "Starting..."
+                : controlBusy === `stop:${preset.id}`
+                  ? "Stopping..."
+                  : preset.running
+                    ? "Stop"
+                    : "Start"
+            )
+          )
+        ),
+        expanded
+          ? h(
+              "div",
+              { className: "compact-row-details" },
+              h("p", { className: "node-meta" }, preset.description),
+              h("p", { className: "node-meta" }, preset.programPath),
+              preset.seeds && preset.seeds.length > 0
+                ? h("p", { className: "node-meta" }, `seeds: ${preset.seeds.join(", ")}`)
+                : h("p", { className: "node-meta" }, "seeds: none"),
+              h("p", { className: "node-meta" }, `recommended query: ${preset.recommendedQuery}`),
+              preset.logPath ? h("p", { className: "node-meta" }, `log: ${preset.logPath}`) : null
+            )
+          : null
+      );
+    }
+
+    function renderRuntimeNode(node) {
+      const expanded = !!expandedNodeIds[node.id];
+      return h(
+        "article",
+        {
+          key: node.id,
+          className: `compact-row runtime-row tone-${statusTone(node)}${expanded ? " is-expanded" : ""}`
+        },
+        h(
+          "div",
+          { className: "compact-row-head" },
+          h(
+            "div",
+            { className: "compact-row-copy" },
+            h(
+              "div",
+              { className: "compact-title-row" },
+              h("strong", null, node.id),
+              h("span", { className: "pill" }, statusTone(node))
+            ),
+            h("p", { className: "compact-summary" }, node.endpoint || "external origin")
+          ),
+          h(
+            "div",
+            { className: "compact-actions" },
+            h(
+              "button",
+              {
+                type: "button",
+                className: "secondary-button compact",
+                onClick: function () {
+                  toggleMapEntry(setExpandedNodeIds, node.id);
+                }
+              },
+              expanded ? "Hide" : "Details"
+            )
+          )
+        ),
+        expanded
+          ? h(
+              "div",
+              { className: "compact-row-details" },
+              node.programPath ? h("p", { className: "node-meta" }, node.programPath) : null,
+              node.currentQuery ? h("p", { className: "node-meta" }, `query: ${node.currentQuery}`) : null,
+              node.lastResult
+                ? h(
+                    "p",
+                    { className: "node-meta" },
+                    node.lastResult.success
+                      ? `${node.lastResult.answerCount} answers, ${node.lastResult.bundleCount} bundles`
+                      : node.lastResult.error || "query failed"
+                  )
+                : h("p", { className: "node-meta" }, "No query result yet.")
+            )
+          : null
+      );
+    }
+
+    function renderQueryPane() {
+      return h(
+        "div",
+        { className: "sidebar-scroll query-pane" },
+        h(
+          "section",
+          { className: "sidebar-section sidebar-intro" },
+          h("span", { className: "section-kicker" }, "Query Runner"),
+          h("h3", { className: "section-title" }, "Send a live query into the cluster"),
+          h(
+            "p",
+            { className: "section-subtitle" },
+            "Choose a client-facing node, run the query, then inspect the certificate and proof artifacts below."
+          )
+        ),
+        h(
+          "form",
+          { className: "query-form", onSubmit: handleQuerySubmit },
+          h(
+            "label",
+            { className: "field-label" },
+            "Target Node",
+            h(
+              "select",
+              {
+                className: "field-control",
+                value: selectedNodeId,
+                onChange: function (event) {
+                  setSelectedNodeId(event.target.value);
+                }
+              },
+              selectableTargets.length === 0
+                ? h("option", { value: "" }, "Start a node first")
+                : selectableTargets.map((node) =>
+                    h("option", { key: node.id, value: node.id }, `${node.id} (${node.endpoint})`)
+                  )
+            )
+          ),
+          h(
+            "label",
+            { className: "field-label" },
+            "Command Line",
+            h(
+              "div",
+              { className: "cli-shell" },
+              h(
+                "span",
+                { className: "cli-prefix" },
+                selectedNode ? `etbctl query ${selectedNode.endpoint}` : "etbctl query <node>"
+              ),
+              h("input", {
+                className: "cli-input",
+                type: "text",
+                value: queryText,
+                placeholder:
+                  selectedPreset && selectedPreset.recommendedQuery
+                    ? selectedPreset.recommendedQuery
+                    : "trip_ready(alice)",
+                onChange: function (event) {
+                  setQueryText(event.target.value);
+                }
+              }),
+              selectedPreset && selectedPreset.recommendedQuery
+                ? h("span", { className: "field-hint" }, `Suggested: ${selectedPreset.recommendedQuery}`)
+                : null
+            )
+          ),
+          h(
+            "div",
+            { className: "button-row" },
+            h(
+              "button",
+              {
+                type: "submit",
+                className: "primary-button",
+                disabled: controlBusy !== "" || !selectedNodeId || queryText.trim() === ""
+              },
+              controlBusy === "query" ? "Running..." : "Send Query"
+            ),
+            h(
+              "button",
+              {
+                type: "button",
+                className: "secondary-button",
+                disabled: controlBusy !== "" || !snapshot.lastQuery || !snapshot.lastQuery.success,
+                onClick: handleVerify
+              },
+              controlBusy === "verify" ? "Checking..." : "Run Proof Checker"
+            )
+          )
+        ),
+        snapshot.lastQuery
+          ? h(
+              "div",
+              { className: "result-stack" },
+              h(
+                "section",
+                { className: "result-summary-card" },
+                h(
+                  "div",
+                  { className: "result-summary-head" },
+                  h("span", { className: "section-kicker" }, "Last Query"),
+                  h(
+                    "strong",
+                    { className: "result-summary-title" },
+                    `${snapshot.lastQuery.nodeId} · ${snapshot.lastQuery.queryText}`
+                  )
+                ),
+                h(
+                  "div",
+                  { className: "result-summary-grid" },
+                  MetricChip("Answers", String(snapshot.lastQuery.answers ? snapshot.lastQuery.answers.length : 0)),
+                  MetricChip("Bundles", String(snapshot.lastQuery.bundles || 0)),
+                  MetricChip("Status", snapshot.lastQuery.success ? "ok" : "failed")
+                )
+              ),
+              renderDisclosure(
+                "artifacts",
+                "Artifacts",
+                snapshot.lastQuery.outputDir || "Query output paths",
+                h(
+                  "div",
+                  { className: "result-grid" },
+                  detailLine("Node", snapshot.lastQuery.nodeId),
+                  detailLine("Endpoint", snapshot.lastQuery.endpoint),
+                  detailLine("Output Dir", snapshot.lastQuery.outputDir),
+                  detailLine("Certificate", snapshot.lastQuery.certificatePath || "not written"),
+                  detailLine("Proof", snapshot.lastQuery.proofPath || "not written"),
+                  detailLine("Bundle Dir", snapshot.lastQuery.bundleDir || "n/a"),
+                  detailLine("stdout", snapshot.lastQuery.stdoutPath || "n/a"),
+                  detailLine("stderr", snapshot.lastQuery.stderrPath || "n/a")
+                )
+              ),
+              snapshot.lastQuery.answers && snapshot.lastQuery.answers.length > 0
+                ? renderDisclosure(
+                    "answers",
+                    "Answers",
+                    `${snapshot.lastQuery.answers.length} derived answers`,
+                    h(
+                      "div",
+                      { className: "answer-list" },
+                      snapshot.lastQuery.answers.map((answer) =>
+                        h("code", { key: answer, className: "answer-pill" }, answer)
+                      )
+                    )
+                  )
+                : null,
+              snapshot.lastQuery.verification
+                ? renderDisclosure(
+                    "verification",
+                    "Verification",
+                    snapshot.lastQuery.verification.success
+                      ? "Proof verification passed"
+                      : "Proof verification failed",
+                    h(
+                      "div",
+                      { className: "verification-block" },
+                      h(
+                        "div",
+                        {
+                          className: snapshot.lastQuery.verification.success
+                            ? "status-banner status-ok"
+                            : "status-banner status-error"
+                        },
+                        snapshot.lastQuery.verification.success
+                          ? "Proof verification passed."
+                          : "Proof verification failed."
+                      ),
+                      snapshot.lastQuery.verification.results.map((entry) =>
+                        h(
+                          "div",
+                          { key: entry.label, className: "verify-row" },
+                          h("strong", null, entry.label),
+                          h("span", null, entry.success ? "ok" : "failed"),
+                          h("code", null, entry.proofPath)
+                        )
+                      )
+                    )
+                  )
+                : null
+            )
+          : h(
+              "div",
+              { className: "empty-state" },
+              selectableTargets.length > 0
+                ? `Ready to query ${selectedNodeId || "a live node"}. The proof and certificate drawers will appear here after the first run.`
+                : "No dashboard query has been run yet. Start a client or customer node, then send a query from this pane."
+            )
+      );
+    }
+
+    function renderNodesPane() {
+      return h(
+        "div",
+        { className: "sidebar-scroll launch-pane" },
+        groupedCatalog.map((group) =>
+          h(
+            "section",
+            { key: group.scenario, className: "sidebar-section" },
+            h(
+              "div",
+              { className: "section-heading-row" },
+              h("h3", { className: "section-title" }, group.scenario),
+              h("span", { className: "section-count" }, `${group.items.length} nodes`)
+            ),
+            h(
+              "div",
+              { className: "compact-list" },
+              group.items.map(renderPresetCard)
+            )
+          )
+        ),
+        h(
+          "section",
+          { className: "sidebar-section" },
+          h(
+            "div",
+            { className: "section-heading-row" },
+            h("h3", { className: "section-title" }, "Runtime"),
+            h("span", { className: "section-count" }, `${snapshot.nodes.length} visible`)
+          ),
+          snapshot.nodes.length > 0
+            ? h("div", { className: "compact-list" }, snapshot.nodes.map(renderRuntimeNode))
+            : h("div", { className: "empty-state compact-empty" }, "No nodes are visible yet.")
+        )
+      );
+    }
+
     return h(
       "div",
       { className: "page-shell" },
       h(
         "header",
-        { className: "hero" },
+        { className: "topbar panel-surface" },
         h(
           "div",
-          { className: "hero-copy" },
-          h("p", { className: "eyebrow" }, "Live zk-ETB Topology"),
-          h("h1", null, "Nodes, routes, proofs, and a control deck"),
+          { className: "topbar-brand" },
+          h("p", { className: "eyebrow" }, "zk-ETB"),
+          h("h1", null, "Distributed Proof Dashboard"),
           h(
             "p",
-            { className: "hero-text" },
-            "Start example nodes from the dashboard, send a live query into the client or customer node, and verify the returned certificate and proof bundle without leaving the UI."
+            { className: "topbar-subtext" },
+            "Watch topology updates in real time, route live queries, and verify proof artifacts without losing the cluster view."
           )
         ),
         h(
           "div",
-          { className: "hero-meta" },
-          h("div", { className: "meta-card" }, h("span", { className: "meta-label" }, "Events File"), h("strong", null, snapshot.eventsFile || "n/a")),
-          h("div", { className: "meta-card" }, h("span", { className: "meta-label" }, "Control Dir"), h("strong", null, snapshot.controlDir || "n/a")),
-          h("div", { className: "meta-card" }, h("span", { className: "meta-label" }, "Live Nodes"), h("strong", null, String(liveTargets.length)))
+          { className: "topbar-stats" },
+          MetricChip("Live Nodes", String(liveTargets.length)),
+          MetricChip("Running Presets", String(runningPresetCount)),
+          MetricChip("Messages", String(snapshot.messages.length))
+        ),
+        h(
+          "div",
+          { className: "topbar-actions" },
+          h(
+            "button",
+            {
+              type: "button",
+              className: "secondary-button",
+              onClick: function () {
+                setActivityOpen(!activityOpen);
+              }
+            },
+            activityOpen ? "Hide Logs" : "Show Logs"
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              className: sidebarOpen ? "secondary-button" : "primary-button",
+              onClick: function () {
+                setSidebarOpen(!sidebarOpen);
+              }
+            },
+            sidebarOpen ? "Hide Controls" : "Open Controls"
+          )
         )
       ),
       h(
         "main",
-        { className: "dashboard-grid" },
+        { className: sidebarOpen ? "workspace sidebar-open" : "workspace sidebar-closed" },
         h(
           "section",
-          { className: "main-column" },
+          { className: "main-stage" },
           h(
-            "div",
-            { className: "graph-panel" },
-            h("div", { className: "panel-heading" }, h("h2", null, "Topology"), h("p", null, "Dots animate on incoming communication events.")),
+            "section",
+            { className: "topology-card panel-surface" },
+            h(
+              "div",
+              { className: "panel-heading topology-heading" },
+              h(
+                "div",
+                null,
+                h("h2", null, "Topology"),
+                h("p", null, "Live peers stay on the canvas while animated dots trace active communication.")
+              ),
+              h(
+                "div",
+                { className: "topology-meta" },
+                MetricChip("Events", String(snapshot.activity.length)),
+                MetricChip("Query Targets", String(selectableTargets.length))
+              )
+            ),
             h(
               "svg",
-              { className: "network-canvas", viewBox: "0 0 980 680" },
-              h("defs", null,
-                h("radialGradient", { id: "panelGlow" },
-                  h("stop", { offset: "0%", stopColor: "rgba(255,255,255,0.22)" }),
+              { className: "network-canvas", viewBox: "0 0 1180 760" },
+              h(
+                "defs",
+                null,
+                h(
+                  "radialGradient",
+                  { id: "panelGlow" },
+                  h("stop", { offset: "0%", stopColor: "rgba(255,255,255,0.20)" }),
                   h("stop", { offset: "100%", stopColor: "rgba(255,255,255,0)" })
                 )
               ),
-              h("rect", { x: 0, y: 0, width: 980, height: 680, fill: "url(#panelGlow)" }),
+              h("rect", { x: 0, y: 0, width: 1180, height: 760, fill: "url(#panelGlow)" }),
               edges.map((edge) => {
                 const from = layout[edge.fromNodeId];
                 const to = layout[edge.toNodeId];
@@ -646,50 +1117,110 @@
                 return h(
                   "g",
                   { key: node.id, transform: `translate(${position.x}, ${position.y})` },
-                  h("circle", { r: node.kind === "external" ? 38 : 50, className: `node-core node-${tone}` }),
-                  h("circle", { r: node.kind === "external" ? 52 : 66, className: "node-halo" }),
-                  h("text", { y: -6, className: "node-title", textAnchor: "middle" }, node.id),
-                  h("text", { y: 16, className: "node-subtitle", textAnchor: "middle" }, node.endpoint || node.status),
+                  h("circle", { r: node.kind === "external" ? 38 : 52, className: `node-core node-${tone}` }),
+                  h("circle", { r: node.kind === "external" ? 52 : 68, className: "node-halo" }),
+                  h("text", { y: -8, className: "node-title", textAnchor: "middle" }, node.id),
+                  h("text", { y: 17, className: "node-subtitle", textAnchor: "middle" }, node.endpoint || node.status),
                   node.currentQuery
-                    ? h("text", { y: 58, className: "node-query", textAnchor: "middle" }, node.currentQuery)
+                    ? h("text", { y: 62, className: "node-query", textAnchor: "middle" }, node.currentQuery)
                     : null
                 );
               })
             )
           ),
           h(
-            "div",
-            { className: "card" },
-            h("div", { className: "panel-heading" }, h("h2", null, "Activity"), h("p", null, "Most recent lifecycle and transaction events.")),
+            "section",
+            {
+              className: activityOpen
+                ? "activity-shell panel-surface is-open"
+                : "activity-shell panel-surface"
+            },
             h(
-              "div",
-              { className: "activity-list" },
-              snapshot.activity.map((entry) =>
+              "button",
+              {
+                type: "button",
+                className: "disclosure-toggle activity-toggle",
+                onClick: function () {
+                  setActivityOpen(!activityOpen);
+                }
+              },
+              h(
+                "div",
+                { className: "disclosure-toggle-copy" },
+                h("span", { className: "disclosure-kicker" }, "Activity"),
                 h(
-                  "article",
-                  { key: entry.id, className: `activity-row activity-${activityTone(entry)}` },
-                  h("span", { className: "activity-time" }, formatTime(entry.ts)),
-                  h(
-                    "div",
-                    { className: "activity-copy" },
-                    h("strong", null, entry.title),
-                    h("p", null, entry.detail)
+                  "strong",
+                  { className: "disclosure-title" },
+                  latestActivity ? latestActivity.title : "No activity yet"
+                ),
+                h(
+                  "span",
+                  { className: "activity-summary" },
+                  latestActivity
+                    ? `${formatTime(latestActivity.ts)} · ${latestActivity.detail || "Recent lifecycle and query events"}`
+                    : "Open the log drawer to inspect node lifecycle events and Datalog invocations."
+                )
+              ),
+              h("span", { className: "disclosure-chevron" }, activityOpen ? "Hide" : "Show")
+            ),
+            activityOpen
+              ? h(
+                  "div",
+                  { className: "activity-list" },
+                  snapshot.activity.map((entry) =>
+                    h(
+                      "article",
+                      { key: entry.id, className: `activity-row activity-${activityTone(entry)}` },
+                      h("span", { className: "activity-time" }, formatTime(entry.ts)),
+                      h(
+                        "div",
+                        { className: "activity-copy" },
+                        h("strong", null, entry.title),
+                        h("p", null, entry.detail)
+                      )
+                    )
                   )
                 )
-              )
-            )
+              : null
           )
         ),
         h(
-          "section",
-          { className: "side-panel" },
+          "aside",
+          { className: sidebarOpen ? "sidebar sidebar-open" : "sidebar sidebar-closed" },
           h(
             "div",
-            { className: "card control-card" },
-            h("div", { className: "panel-heading" }, h("h2", null, "Command Deck"), h("p", null, "Launch nodes, send live queries, and verify proofs.")),
+            { className: "sidebar-shell panel-surface" },
             h(
               "div",
-              { className: "tab-row" },
+              { className: "sidebar-header" },
+              h(
+                "div",
+                null,
+                h("span", { className: "section-kicker" }, "Control Panel"),
+                h("h2", null, activeTab === "query" ? "Query" : "Nodes"),
+                h(
+                  "p",
+                  null,
+                  activeTab === "query"
+                    ? "Run a query and inspect the returned proof bundle."
+                    : "Start or stop nodes and inspect live node state."
+                )
+              ),
+              h(
+                "button",
+                {
+                  type: "button",
+                  className: "secondary-button compact",
+                  onClick: function () {
+                    setSidebarOpen(false);
+                  }
+                },
+                "Collapse"
+              )
+            ),
+            h(
+              "div",
+              { className: "sidebar-tabbar" },
               h(
                 "button",
                 {
@@ -715,237 +1246,7 @@
             ),
             controlError ? h("div", { className: "status-banner status-error" }, controlError) : null,
             !controlError && controlNote ? h("div", { className: "status-banner status-note" }, controlNote) : null,
-            activeTab === "query"
-              ? h(
-                  "div",
-                  { className: "query-pane" },
-                  h(
-                    "form",
-                    { className: "query-form", onSubmit: handleQuerySubmit },
-                    h(
-                      "label",
-                      { className: "field-label" },
-                      "Target Node",
-                      h(
-                        "select",
-                        {
-                          className: "field-control",
-                          value: selectedNodeId,
-                          onChange: function (event) {
-                            setSelectedNodeId(event.target.value);
-                          }
-                        },
-                        selectableTargets.length === 0
-                          ? h("option", { value: "" }, "Start a node first")
-                          : selectableTargets.map((node) =>
-                              h("option", { key: node.id, value: node.id }, `${node.id} (${node.endpoint})`)
-                            )
-                      )
-                    ),
-                    h(
-                      "label",
-                      { className: "field-label" },
-                      "Command Line",
-                      h(
-                        "div",
-                        { className: "cli-shell" },
-                        h("span", { className: "cli-prefix" }, selectedNode ? `etbctl query ${selectedNode.endpoint}` : "etbctl query <node>"),
-                        h("input", {
-                          className: "cli-input",
-                          type: "text",
-                          value: queryText,
-                          placeholder:
-                            selectedPreset && selectedPreset.recommendedQuery
-                              ? selectedPreset.recommendedQuery
-                              : "trip_ready(alice)",
-                          onChange: function (event) {
-                            setQueryText(event.target.value);
-                          }
-                        }),
-                        selectedPreset && selectedPreset.recommendedQuery
-                          ? h(
-                              "span",
-                              { className: "field-hint" },
-                              `Suggested: ${selectedPreset.recommendedQuery}`
-                            )
-                          : null
-                      )
-                    ),
-                    h(
-                      "div",
-                      { className: "button-row" },
-                      h(
-                        "button",
-                        {
-                          type: "submit",
-                          className: "primary-button",
-                          disabled: controlBusy !== "" || !selectedNodeId || queryText.trim() === ""
-                        },
-                        controlBusy === "query" ? "Running..." : "Send Query"
-                      ),
-                      h(
-                        "button",
-                        {
-                          type: "button",
-                          className: "secondary-button",
-                          disabled: controlBusy !== "" || !snapshot.lastQuery || !snapshot.lastQuery.success,
-                          onClick: handleVerify
-                        },
-                        controlBusy === "verify" ? "Checking..." : "Run Proof Checker"
-                      )
-                    )
-                  ),
-                  snapshot.lastQuery
-                    ? h(
-                        "div",
-                        { className: "result-block" },
-                        h("h3", null, "Last Query Result"),
-                        h(
-                          "div",
-                          { className: "result-grid" },
-                          detailLine("Node", snapshot.lastQuery.nodeId),
-                          detailLine("Endpoint", snapshot.lastQuery.endpoint),
-                          detailLine("Query", snapshot.lastQuery.queryText),
-                          detailLine("Output Dir", snapshot.lastQuery.outputDir),
-                          detailLine("Certificate", snapshot.lastQuery.certificatePath || "not written"),
-                          detailLine("Proof", snapshot.lastQuery.proofPath || "not written"),
-                          detailLine("Bundle Dir", snapshot.lastQuery.bundleDir || "n/a"),
-                          detailLine("stdout", snapshot.lastQuery.stdoutPath || "n/a"),
-                          detailLine("stderr", snapshot.lastQuery.stderrPath || "n/a")
-                        ),
-                        snapshot.lastQuery.answers && snapshot.lastQuery.answers.length > 0
-                          ? h(
-                              "div",
-                              { className: "answer-list" },
-                              snapshot.lastQuery.answers.map((answer) =>
-                                h("code", { key: answer, className: "answer-pill" }, answer)
-                              )
-                            )
-                          : null,
-                        snapshot.lastQuery.verification
-                          ? h(
-                              "div",
-                              { className: "verification-block" },
-                              h(
-                                "div",
-                                {
-                                  className: snapshot.lastQuery.verification.success
-                                    ? "status-banner status-ok"
-                                    : "status-banner status-error"
-                                },
-                                snapshot.lastQuery.verification.success
-                                  ? "Proof verification passed."
-                                  : "Proof verification failed."
-                              ),
-                              snapshot.lastQuery.verification.results.map((entry) =>
-                                h(
-                                  "div",
-                                  { key: entry.label, className: "verify-row" },
-                                  h("strong", null, entry.label),
-                                  h("span", null, entry.success ? "ok" : "failed"),
-                                  h("code", null, entry.proofPath)
-                                )
-                              )
-                            )
-                          : null
-                      )
-                    : h(
-                        "div",
-                        { className: "empty-state" },
-                        selectableTargets.length > 0
-                          ? `Ready to query ${selectedNodeId || "a live node"}. Send a command above and the certificate/proof paths will appear here.`
-                          : "No dashboard query has been run yet. Start a client or customer node, then send a query from this pane."
-                      )
-                )
-              : h(
-                  "div",
-                  { className: "launch-pane" },
-                  groupedCatalog.map((group) =>
-                    h(
-                      "section",
-                      { key: group.scenario, className: "preset-group" },
-                      h("h3", null, group.scenario),
-                      group.items.map((preset) =>
-                        h(
-                          "article",
-                          { key: preset.id, className: "preset-card" },
-                          h(
-                            "div",
-                            { className: "preset-head" },
-                            h(
-                              "div",
-                              null,
-                              h("strong", null, `${preset.label} (${preset.nodeId})`),
-                              h("p", { className: "preset-copy" }, preset.description)
-                            ),
-                            h(
-                              "button",
-                              {
-                                type: "button",
-                                className: preset.running ? "secondary-button compact" : "primary-button compact",
-                                disabled:
-                                  controlBusy !== "" &&
-                                  controlBusy !== `start:${preset.id}` &&
-                                  controlBusy !== `stop:${preset.id}`,
-                                onClick: function () {
-                                  if (preset.running) {
-                                    handleStop(preset.id);
-                                  } else {
-                                    handleStart(preset.id);
-                                  }
-                                }
-                              },
-                              controlBusy === `start:${preset.id}`
-                                ? "Starting..."
-                                : controlBusy === `stop:${preset.id}`
-                                  ? "Stopping..."
-                                  : preset.running
-                                    ? "Stop"
-                                    : "Start"
-                            )
-                          ),
-                          h("p", { className: "node-endpoint" }, preset.endpoint),
-                          h("p", { className: "node-meta" }, preset.programPath),
-                          preset.seeds && preset.seeds.length > 0
-                            ? h("p", { className: "node-meta" }, `seeds: ${preset.seeds.join(", ")}`)
-                            : h("p", { className: "node-meta" }, "seeds: none"),
-                          h("p", { className: "node-meta" }, `recommended query: ${preset.recommendedQuery}`),
-                          preset.logPath ? h("p", { className: "node-meta" }, `log: ${preset.logPath}`) : null
-                        )
-                      )
-                    )
-                  )
-                )
-          ),
-          h(
-            "div",
-            { className: "card" },
-            h("div", { className: "panel-heading" }, h("h2", null, "Nodes"), h("p", null, "Runtime status, endpoints, and recent proof results.")),
-            h(
-              "div",
-              { className: "node-list" },
-              snapshot.nodes.map((node) =>
-                h(
-                  "article",
-                  { key: node.id, className: `node-card tone-${statusTone(node)}` },
-                  h("div", { className: "node-card-top" },
-                    h("strong", null, node.id),
-                    h("span", { className: "pill" }, statusTone(node))
-                  ),
-                  h("p", { className: "node-endpoint" }, node.endpoint || "external origin"),
-                  node.programPath ? h("p", { className: "node-meta" }, node.programPath) : null,
-                  node.lastResult
-                    ? h(
-                        "p",
-                        { className: "node-meta" },
-                        node.lastResult.success
-                          ? `${node.lastResult.answerCount} answers, ${node.lastResult.bundleCount} bundles`
-                          : node.lastResult.error || "query failed"
-                      )
-                    : null
-                )
-              )
-            )
+            activeTab === "query" ? renderQueryPane() : renderNodesPane()
           )
         )
       )
