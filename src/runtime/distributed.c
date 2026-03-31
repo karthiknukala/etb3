@@ -35,8 +35,12 @@ typedef struct etb_string_list {
 typedef struct etb_node_context {
   const char *node_id;
   const char *program_path;
+  const char *listen_endpoint;
   const etb_peer_route_map *peers;
+  const etb_endpoint_list *seeds;
   const char *prover_path;
+  etb_peer_route_map local_routes;
+  char registry_path[256];
 } etb_node_context;
 
 static void etb_string_list_init(etb_string_list *list) {
@@ -102,6 +106,18 @@ void etb_peer_route_map_free(etb_peer_route_map *map) {
 bool etb_peer_route_map_add(etb_peer_route_map *map, const char *principal,
                             const char *endpoint) {
   etb_peer_route *grown;
+  size_t index;
+  for (index = 0U; index < map->count; ++index) {
+    if (strcmp(map->items[index].principal, principal) == 0) {
+      char *copy = strdup(endpoint);
+      if (copy == NULL) {
+        return false;
+      }
+      free(map->items[index].endpoint);
+      map->items[index].endpoint = copy;
+      return true;
+    }
+  }
   if (map->count == map->capacity) {
     size_t capacity = map->capacity == 0U ? 8U : map->capacity * 2U;
     grown = (etb_peer_route *)realloc(map->items, sizeof(*grown) * capacity);
@@ -132,6 +148,56 @@ const char *etb_peer_route_map_lookup(const etb_peer_route_map *map,
     }
   }
   return NULL;
+}
+
+bool etb_peer_route_map_merge(etb_peer_route_map *dst,
+                              const etb_peer_route_map *src) {
+  size_t index;
+  for (index = 0U; index < src->count; ++index) {
+    if (!etb_peer_route_map_add(dst, src->items[index].principal,
+                                src->items[index].endpoint)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void etb_endpoint_list_init(etb_endpoint_list *list) {
+  memset(list, 0, sizeof(*list));
+}
+
+void etb_endpoint_list_free(etb_endpoint_list *list) {
+  size_t index;
+  for (index = 0U; index < list->count; ++index) {
+    free(list->items[index]);
+  }
+  free(list->items);
+  memset(list, 0, sizeof(*list));
+}
+
+bool etb_endpoint_list_add(etb_endpoint_list *list, const char *endpoint) {
+  char **grown;
+  size_t index;
+  for (index = 0U; index < list->count; ++index) {
+    if (strcmp(list->items[index], endpoint) == 0) {
+      return true;
+    }
+  }
+  if (list->count == list->capacity) {
+    size_t capacity = list->capacity == 0U ? 8U : list->capacity * 2U;
+    grown = (char **)realloc(list->items, sizeof(*grown) * capacity);
+    if (grown == NULL) {
+      return false;
+    }
+    list->items = grown;
+    list->capacity = capacity;
+  }
+  list->items[list->count] = strdup(endpoint);
+  if (list->items[list->count] == NULL) {
+    return false;
+  }
+  list->count += 1U;
+  return true;
 }
 
 static void etb_bundle_free(etb_bundle *bundle) {
@@ -250,6 +316,124 @@ static bool etb_parse_endpoint(const char *endpoint, char **host_out,
   }
   memcpy(*host_out, endpoint, host_size);
   (*host_out)[host_size] = '\0';
+  return true;
+}
+
+static bool etb_route_is_publishable(const char *principal,
+                                     const char *endpoint) {
+  return principal != NULL && principal[0] != '\0' && endpoint != NULL &&
+         endpoint[0] != '\0';
+}
+
+static void etb_sanitize_name(const char *input, char *output,
+                              size_t output_size) {
+  size_t used = 0U;
+  while (*input != '\0' && used + 1U < output_size) {
+    char ch = *input++;
+    output[used++] =
+        ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+         (ch >= '0' && ch <= '9'))
+            ? ch
+            : '_';
+  }
+  output[used] = '\0';
+}
+
+static bool etb_registry_load(const char *path, etb_peer_route_map *routes) {
+  FILE *stream = fopen(path, "rb");
+  char line[512];
+  etb_peer_route_map_init(routes);
+  if (stream == NULL) {
+    return true;
+  }
+  while (fgets(line, sizeof(line), stream) != NULL) {
+    char *sep = strchr(line, '|');
+    char *newline;
+    if (sep == NULL) {
+      continue;
+    }
+    *sep = '\0';
+    newline = strchr(sep + 1, '\n');
+    if (newline != NULL) {
+      *newline = '\0';
+    }
+    if (!etb_route_is_publishable(line, sep + 1)) {
+      continue;
+    }
+    if (!etb_peer_route_map_add(routes, line, sep + 1)) {
+      fclose(stream);
+      etb_peer_route_map_free(routes);
+      return false;
+    }
+  }
+  fclose(stream);
+  return true;
+}
+
+static bool etb_registry_save(const char *path, const etb_peer_route_map *routes) {
+  FILE *stream = fopen(path, "wb");
+  size_t index;
+  if (stream == NULL) {
+    return false;
+  }
+  for (index = 0U; index < routes->count; ++index) {
+    if (!etb_route_is_publishable(routes->items[index].principal,
+                                  routes->items[index].endpoint)) {
+      continue;
+    }
+    if (fprintf(stream, "%s|%s\n", routes->items[index].principal,
+                routes->items[index].endpoint) < 0) {
+      fclose(stream);
+      return false;
+    }
+  }
+  fclose(stream);
+  return true;
+}
+
+static bool etb_registry_merge_and_save(const char *path,
+                                        const etb_peer_route_map *extra) {
+  etb_peer_route_map routes;
+  bool ok;
+  if (!etb_registry_load(path, &routes)) {
+    return false;
+  }
+  ok = etb_peer_route_map_merge(&routes, extra) && etb_registry_save(path, &routes);
+  etb_peer_route_map_free(&routes);
+  return ok;
+}
+
+static bool etb_collect_local_routes(const char *program_path,
+                                     const char *listen_endpoint,
+                                     const char *node_id,
+                                     etb_peer_route_map *routes,
+                                     char *error, size_t error_size) {
+  etb_program program;
+  size_t index;
+  etb_program_init(&program);
+  etb_peer_route_map_init(routes);
+  if (!etb_parse_file(program_path, &program, error, error_size)) {
+    return false;
+  }
+  for (index = 0U; index < program.count; ++index) {
+    if (program.items[index].kind == ETB_STMT_CLAUSE &&
+        program.items[index].as.clause.head.kind == ETB_ATOM_SAYS &&
+        program.items[index].as.clause.head.principal != NULL &&
+        !etb_peer_route_map_add(routes,
+                                program.items[index].as.clause.head.principal,
+                                listen_endpoint)) {
+      etb_program_free(&program);
+      snprintf(error, error_size, "out of memory");
+      return false;
+    }
+  }
+  if (routes->count == 0U &&
+      !etb_peer_route_map_add(routes, node_id, listen_endpoint)) {
+    etb_program_free(&program);
+    snprintf(error, error_size, "out of memory");
+    return false;
+  }
+  etb_program_free(&program);
   return true;
 }
 
@@ -593,6 +777,101 @@ static bool etb_encode_bundle(etb_cbor_buffer *buffer, const etb_bundle *bundle)
                                      bundle->proof_size));
 }
 
+static bool etb_encode_routes(etb_cbor_buffer *buffer,
+                              const etb_peer_route_map *routes) {
+  size_t index;
+  size_t publishable = 0U;
+  for (index = 0U; index < routes->count; ++index) {
+    if (etb_route_is_publishable(routes->items[index].principal,
+                                 routes->items[index].endpoint)) {
+      publishable += 1U;
+    }
+  }
+  if (!etb_cbor_write_array_header(buffer, publishable)) {
+    return false;
+  }
+  for (index = 0U; index < routes->count; ++index) {
+    if (!etb_route_is_publishable(routes->items[index].principal,
+                                  routes->items[index].endpoint)) {
+      continue;
+    }
+    if (!etb_cbor_write_map_header(buffer, 2U) ||
+        !etb_cbor_write_text(buffer, "principal") ||
+        !etb_cbor_write_text(buffer, routes->items[index].principal) ||
+        !etb_cbor_write_text(buffer, "endpoint") ||
+        !etb_cbor_write_text(buffer, routes->items[index].endpoint)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool etb_decode_routes(etb_cbor_cursor *cursor,
+                              etb_peer_route_map *routes) {
+  size_t route_count;
+  size_t route_index;
+  etb_peer_route_map_init(routes);
+  if (!etb_cbor_read_array_header(cursor, &route_count)) {
+    return false;
+  }
+  for (route_index = 0U; route_index < route_count; ++route_index) {
+    size_t pair_count;
+    size_t pair_index;
+    char *principal = NULL;
+    char *endpoint = NULL;
+    if (!etb_cbor_read_map_header(cursor, &pair_count)) {
+      free(principal);
+      free(endpoint);
+      etb_peer_route_map_free(routes);
+      return false;
+    }
+    for (pair_index = 0U; pair_index < pair_count; ++pair_index) {
+      char *key = NULL;
+      if (!etb_cbor_read_text(cursor, &key)) {
+        free(key);
+        free(principal);
+        free(endpoint);
+        etb_peer_route_map_free(routes);
+        return false;
+      }
+      if (strcmp(key, "principal") == 0) {
+        if (!etb_cbor_read_text(cursor, &principal)) {
+          free(key);
+          free(principal);
+          free(endpoint);
+          etb_peer_route_map_free(routes);
+          return false;
+        }
+      } else if (strcmp(key, "endpoint") == 0) {
+        if (!etb_cbor_read_text(cursor, &endpoint)) {
+          free(key);
+          free(principal);
+          free(endpoint);
+          etb_peer_route_map_free(routes);
+          return false;
+        }
+      } else {
+        free(key);
+        free(principal);
+        free(endpoint);
+        etb_peer_route_map_free(routes);
+        return false;
+      }
+      free(key);
+    }
+    if (principal == NULL || endpoint == NULL ||
+        !etb_peer_route_map_add(routes, principal, endpoint)) {
+      free(principal);
+      free(endpoint);
+      etb_peer_route_map_free(routes);
+      return false;
+    }
+    free(principal);
+    free(endpoint);
+  }
+  return true;
+}
+
 static bool etb_decode_bundle(etb_cbor_cursor *cursor, etb_bundle *bundle) {
   size_t pair_count;
   size_t index;
@@ -643,13 +922,39 @@ static bool etb_decode_bundle(etb_cbor_cursor *cursor, etb_bundle *bundle) {
          bundle->certificate_bytes != NULL;
 }
 
+typedef struct etb_request {
+  char *op;
+  char *query_text;
+  char *node_id;
+  char *endpoint;
+  char *principal;
+  etb_peer_route_map routes;
+} etb_request;
+
+static void etb_request_init(etb_request *request) {
+  memset(request, 0, sizeof(*request));
+  etb_peer_route_map_init(&request->routes);
+}
+
+static void etb_request_free(etb_request *request) {
+  free(request->op);
+  free(request->query_text);
+  free(request->node_id);
+  free(request->endpoint);
+  free(request->principal);
+  etb_peer_route_map_free(&request->routes);
+  memset(request, 0, sizeof(*request));
+}
+
 static bool etb_response_encode_ok(const etb_bundle_list *bundles,
+                                   const etb_peer_route_map *routes,
+                                   const char *endpoint,
                                    unsigned char **payload_out,
                                    size_t *payload_size_out) {
   etb_cbor_buffer buffer;
   size_t index;
   etb_cbor_buffer_init(&buffer);
-  if (!etb_cbor_write_map_header(&buffer, 3U) ||
+  if (!etb_cbor_write_map_header(&buffer, 5U) ||
       !etb_cbor_write_text(&buffer, "ok") ||
       !etb_cbor_write_bool(&buffer, true) ||
       !etb_cbor_write_text(&buffer, "error") ||
@@ -665,6 +970,23 @@ static bool etb_response_encode_ok(const etb_bundle_list *bundles,
       return false;
     }
   }
+  if (!etb_cbor_write_text(&buffer, "routes")) {
+    etb_cbor_buffer_free(&buffer);
+    return false;
+  }
+  if (!etb_encode_routes(&buffer, routes)) {
+    etb_cbor_buffer_free(&buffer);
+    return false;
+  }
+  if (!etb_cbor_write_text(&buffer, "endpoint")) {
+    etb_cbor_buffer_free(&buffer);
+    return false;
+  }
+  if (!(endpoint == NULL ? etb_cbor_write_null(&buffer)
+                         : etb_cbor_write_text(&buffer, endpoint))) {
+    etb_cbor_buffer_free(&buffer);
+    return false;
+  }
   *payload_out = buffer.data;
   *payload_size_out = buffer.size;
   return true;
@@ -675,13 +997,17 @@ static bool etb_response_encode_error(const char *message,
                                       size_t *payload_size_out) {
   etb_cbor_buffer buffer;
   etb_cbor_buffer_init(&buffer);
-  if (!etb_cbor_write_map_header(&buffer, 3U) ||
+  if (!etb_cbor_write_map_header(&buffer, 5U) ||
       !etb_cbor_write_text(&buffer, "ok") ||
       !etb_cbor_write_bool(&buffer, false) ||
       !etb_cbor_write_text(&buffer, "error") ||
       !etb_cbor_write_text(&buffer, message) ||
       !etb_cbor_write_text(&buffer, "bundles") ||
-      !etb_cbor_write_array_header(&buffer, 0U)) {
+      !etb_cbor_write_array_header(&buffer, 0U) ||
+      !etb_cbor_write_text(&buffer, "routes") ||
+      !etb_cbor_write_array_header(&buffer, 0U) ||
+      !etb_cbor_write_text(&buffer, "endpoint") ||
+      !etb_cbor_write_null(&buffer)) {
     etb_cbor_buffer_free(&buffer);
     return false;
   }
@@ -691,7 +1017,9 @@ static bool etb_response_encode_error(const char *message,
 }
 
 static bool etb_decode_response(const unsigned char *payload, size_t payload_size,
-                                etb_bundle_list *bundles, char *error,
+                                etb_bundle_list *bundles,
+                                etb_peer_route_map *routes, char *endpoint,
+                                size_t endpoint_size, char *error,
                                 size_t error_size) {
   etb_cbor_cursor cursor;
   size_t pair_count;
@@ -700,6 +1028,10 @@ static bool etb_decode_response(const unsigned char *payload, size_t payload_siz
   bool saw_ok = false;
 
   etb_bundle_list_init(bundles);
+  etb_peer_route_map_init(routes);
+  if (endpoint != NULL && endpoint_size > 0U) {
+    endpoint[0] = '\0';
+  }
   etb_cbor_cursor_init(&cursor, payload, payload_size);
   if (!etb_cbor_read_map_header(&cursor, &pair_count)) {
     snprintf(error, error_size, "invalid response");
@@ -756,6 +1088,39 @@ static bool etb_decode_response(const unsigned char *payload, size_t payload_siz
         }
         etb_bundle_free(&bundle);
       }
+    } else if (strcmp(key, "routes") == 0) {
+      etb_peer_route_map decoded;
+      if (!etb_decode_routes(&cursor, &decoded)) {
+        free(key);
+        snprintf(error, error_size, "invalid response routes");
+        return false;
+      }
+      if (!etb_peer_route_map_merge(routes, &decoded)) {
+        etb_peer_route_map_free(&decoded);
+        free(key);
+        snprintf(error, error_size, "out of memory");
+        return false;
+      }
+      etb_peer_route_map_free(&decoded);
+    } else if (strcmp(key, "endpoint") == 0) {
+      if (cursor.offset < cursor.size && cursor.data[cursor.offset] == 0xf6U) {
+        if (!etb_cbor_read_null(&cursor)) {
+          free(key);
+          snprintf(error, error_size, "invalid response endpoint");
+          return false;
+        }
+      } else {
+        char *text = NULL;
+        if (!etb_cbor_read_text(&cursor, &text)) {
+          free(key);
+          snprintf(error, error_size, "invalid response endpoint");
+          return false;
+        }
+        if (endpoint != NULL && endpoint_size > 0U) {
+          snprintf(endpoint, endpoint_size, "%s", text);
+        }
+        free(text);
+      }
     } else {
       free(key);
       snprintf(error, error_size, "unknown response field");
@@ -768,21 +1133,29 @@ static bool etb_decode_response(const unsigned char *payload, size_t payload_siz
       snprintf(error, error_size, "remote query failed");
     }
     etb_bundle_list_free(bundles);
+    etb_peer_route_map_free(routes);
     return false;
   }
   return true;
 }
 
-static bool etb_encode_query_request(const char *query_text,
+static bool etb_encode_query_request(const etb_node_context *context,
+                                     const char *query_text,
                                      unsigned char **payload_out,
                                      size_t *payload_size_out) {
   etb_cbor_buffer buffer;
   etb_cbor_buffer_init(&buffer);
-  if (!etb_cbor_write_map_header(&buffer, 2U) ||
+  if (!etb_cbor_write_map_header(&buffer, 5U) ||
       !etb_cbor_write_text(&buffer, "op") ||
       !etb_cbor_write_text(&buffer, "query") ||
       !etb_cbor_write_text(&buffer, "query") ||
-      !etb_cbor_write_text(&buffer, query_text)) {
+      !etb_cbor_write_text(&buffer, query_text) ||
+      !etb_cbor_write_text(&buffer, "node") ||
+      !etb_cbor_write_text(&buffer, context->node_id) ||
+      !etb_cbor_write_text(&buffer, "endpoint") ||
+      !etb_cbor_write_text(&buffer, context->listen_endpoint) ||
+      !etb_cbor_write_text(&buffer, "routes") ||
+      !etb_encode_routes(&buffer, &context->local_routes)) {
     etb_cbor_buffer_free(&buffer);
     return false;
   }
@@ -791,14 +1164,68 @@ static bool etb_encode_query_request(const char *query_text,
   return true;
 }
 
-static bool etb_decode_query_request(const unsigned char *payload,
-                                     size_t payload_size, char **query_text,
-                                     char *error, size_t error_size) {
+static bool etb_encode_announce_request(const etb_node_context *context,
+                                        unsigned char **payload_out,
+                                        size_t *payload_size_out) {
+  etb_cbor_buffer buffer;
+  etb_cbor_buffer_init(&buffer);
+  if (!etb_cbor_write_map_header(&buffer, 4U) ||
+      !etb_cbor_write_text(&buffer, "op") ||
+      !etb_cbor_write_text(&buffer, "announce") ||
+      !etb_cbor_write_text(&buffer, "node") ||
+      !etb_cbor_write_text(&buffer, context->node_id) ||
+      !etb_cbor_write_text(&buffer, "endpoint") ||
+      !etb_cbor_write_text(&buffer, context->listen_endpoint) ||
+      !etb_cbor_write_text(&buffer, "routes") ||
+      !etb_encode_routes(&buffer, &context->local_routes)) {
+    etb_cbor_buffer_free(&buffer);
+    return false;
+  }
+  *payload_out = buffer.data;
+  *payload_size_out = buffer.size;
+  return true;
+}
+
+static bool etb_encode_registry_request(unsigned char **payload_out,
+                                        size_t *payload_size_out) {
+  etb_cbor_buffer buffer;
+  etb_cbor_buffer_init(&buffer);
+  if (!etb_cbor_write_map_header(&buffer, 1U) ||
+      !etb_cbor_write_text(&buffer, "op") ||
+      !etb_cbor_write_text(&buffer, "registry")) {
+    etb_cbor_buffer_free(&buffer);
+    return false;
+  }
+  *payload_out = buffer.data;
+  *payload_size_out = buffer.size;
+  return true;
+}
+
+static bool etb_encode_resolve_request(const char *principal,
+                                       unsigned char **payload_out,
+                                       size_t *payload_size_out) {
+  etb_cbor_buffer buffer;
+  etb_cbor_buffer_init(&buffer);
+  if (!etb_cbor_write_map_header(&buffer, 2U) ||
+      !etb_cbor_write_text(&buffer, "op") ||
+      !etb_cbor_write_text(&buffer, "resolve") ||
+      !etb_cbor_write_text(&buffer, "principal") ||
+      !etb_cbor_write_text(&buffer, principal)) {
+    etb_cbor_buffer_free(&buffer);
+    return false;
+  }
+  *payload_out = buffer.data;
+  *payload_size_out = buffer.size;
+  return true;
+}
+
+static bool etb_decode_request(const unsigned char *payload,
+                               size_t payload_size, etb_request *request,
+                               char *error, size_t error_size) {
   etb_cbor_cursor cursor;
   size_t pair_count;
   size_t index;
-  char *op = NULL;
-  *query_text = NULL;
+  etb_request_init(request);
   etb_cbor_cursor_init(&cursor, payload, payload_size);
   if (!etb_cbor_read_map_header(&cursor, &pair_count)) {
     snprintf(error, error_size, "invalid request");
@@ -812,36 +1239,242 @@ static bool etb_decode_query_request(const unsigned char *payload,
       return false;
     }
     if (strcmp(key, "op") == 0) {
-      if (!etb_cbor_read_text(&cursor, &op)) {
+      if (!etb_cbor_read_text(&cursor, &request->op)) {
         free(key);
         snprintf(error, error_size, "invalid operation");
         return false;
       }
     } else if (strcmp(key, "query") == 0) {
-      if (!etb_cbor_read_text(&cursor, query_text)) {
+      if (!etb_cbor_read_text(&cursor, &request->query_text)) {
         free(key);
         snprintf(error, error_size, "invalid query text");
+        return false;
+      }
+    } else if (strcmp(key, "node") == 0) {
+      if (!etb_cbor_read_text(&cursor, &request->node_id)) {
+        free(key);
+        snprintf(error, error_size, "invalid node id");
+        return false;
+      }
+    } else if (strcmp(key, "endpoint") == 0) {
+      if (!etb_cbor_read_text(&cursor, &request->endpoint)) {
+        free(key);
+        snprintf(error, error_size, "invalid request endpoint");
+        return false;
+      }
+    } else if (strcmp(key, "routes") == 0) {
+      etb_peer_route_map decoded;
+      if (!etb_decode_routes(&cursor, &decoded)) {
+        free(key);
+        snprintf(error, error_size, "invalid request routes");
+        return false;
+      }
+      if (!etb_peer_route_map_merge(&request->routes, &decoded)) {
+        etb_peer_route_map_free(&decoded);
+        free(key);
+        snprintf(error, error_size, "out of memory");
+        return false;
+      }
+      etb_peer_route_map_free(&decoded);
+    } else if (strcmp(key, "principal") == 0) {
+      if (!etb_cbor_read_text(&cursor, &request->principal)) {
+        free(key);
+        snprintf(error, error_size, "invalid request principal");
         return false;
       }
     } else {
       free(key);
       snprintf(error, error_size, "unknown request field");
-      free(op);
-      free(*query_text);
-      *query_text = NULL;
+      etb_request_free(request);
       return false;
     }
     free(key);
   }
-  if (op == NULL || strcmp(op, "query") != 0 || *query_text == NULL) {
-    snprintf(error, error_size, "unsupported request");
-    free(op);
-    free(*query_text);
-    *query_text = NULL;
+  if (request->op == NULL) {
+    snprintf(error, error_size, "missing operation");
+    etb_request_free(request);
     return false;
   }
-  free(op);
   return true;
+}
+
+static bool etb_registry_snapshot(const etb_node_context *context,
+                                  etb_peer_route_map *routes) {
+  if (!etb_registry_load(context->registry_path, routes)) {
+    return false;
+  }
+  if (!etb_peer_route_map_merge(routes, &context->local_routes) ||
+      !etb_peer_route_map_merge(routes, context->peers)) {
+    etb_peer_route_map_free(routes);
+    return false;
+  }
+  return true;
+}
+
+static bool etb_registry_ingest(const etb_node_context *context,
+                                const etb_request *request) {
+  etb_peer_route_map routes;
+  if (!etb_registry_snapshot(context, &routes)) {
+    return false;
+  }
+  if (etb_route_is_publishable(request->node_id, request->endpoint)) {
+    (void)etb_peer_route_map_add(&routes, request->node_id, request->endpoint);
+  }
+  if (!etb_peer_route_map_merge(&routes, &request->routes)) {
+    etb_peer_route_map_free(&routes);
+    return false;
+  }
+  if (!etb_registry_save(context->registry_path, &routes)) {
+    etb_peer_route_map_free(&routes);
+    return false;
+  }
+  etb_peer_route_map_free(&routes);
+  return true;
+}
+
+static bool etb_send_request(const char *endpoint, const unsigned char *request,
+                             size_t request_size, etb_bundle_list *bundles,
+                             etb_peer_route_map *routes, char *resolved_endpoint,
+                             size_t resolved_endpoint_size, char *error,
+                             size_t error_size) {
+  int fd = -1;
+  unsigned char *response = NULL;
+  size_t response_size = 0U;
+  if (!etb_connect_endpoint(endpoint, &fd, error, error_size) ||
+      !etb_send_message(fd, request, request_size) ||
+      !etb_recv_message(fd, &response, &response_size) ||
+      !etb_decode_response(response, response_size, bundles, routes,
+                           resolved_endpoint, resolved_endpoint_size, error,
+                           error_size)) {
+    free(response);
+    if (fd >= 0) {
+      close(fd);
+    }
+    return false;
+  }
+  free(response);
+  close(fd);
+  return true;
+}
+
+static bool etb_discovery_sync_with_seed(const etb_node_context *context,
+                                         const char *endpoint, char *error,
+                                         size_t error_size) {
+  unsigned char *request = NULL;
+  size_t request_size = 0U;
+  etb_bundle_list bundles;
+  etb_peer_route_map routes;
+  bool ok = false;
+  char resolved[8];
+  etb_bundle_list_init(&bundles);
+  etb_peer_route_map_init(&routes);
+  resolved[0] = '\0';
+  if (etb_encode_announce_request(context, &request, &request_size) &&
+      etb_send_request(endpoint, request, request_size, &bundles, &routes,
+                       resolved, sizeof(resolved), error, error_size) &&
+      etb_registry_merge_and_save(context->registry_path, &routes)) {
+    ok = true;
+  }
+  free(request);
+  etb_bundle_list_free(&bundles);
+  etb_peer_route_map_free(&routes);
+  return ok;
+}
+
+static bool etb_discovery_pull_from_seed(const etb_node_context *context,
+                                         const char *endpoint, char *error,
+                                         size_t error_size) {
+  unsigned char *request = NULL;
+  size_t request_size = 0U;
+  etb_bundle_list bundles;
+  etb_peer_route_map routes;
+  bool ok = false;
+  char resolved[256];
+  etb_bundle_list_init(&bundles);
+  etb_peer_route_map_init(&routes);
+  resolved[0] = '\0';
+  if (etb_encode_registry_request(&request, &request_size) &&
+      etb_send_request(endpoint, request, request_size, &bundles, &routes,
+                       resolved, sizeof(resolved), error, error_size) &&
+      etb_registry_merge_and_save(context->registry_path, &routes)) {
+    ok = true;
+  }
+  free(request);
+  etb_bundle_list_free(&bundles);
+  etb_peer_route_map_free(&routes);
+  return ok;
+}
+
+static bool etb_discovery_resolve_with_seed(const etb_node_context *context,
+                                            const char *seed_endpoint,
+                                            const char *principal,
+                                            char *endpoint_out,
+                                            size_t endpoint_out_size,
+                                            char *error,
+                                            size_t error_size) {
+  unsigned char *request = NULL;
+  size_t request_size = 0U;
+  etb_bundle_list bundles;
+  etb_peer_route_map routes;
+  bool ok = false;
+  endpoint_out[0] = '\0';
+  etb_bundle_list_init(&bundles);
+  etb_peer_route_map_init(&routes);
+  if (etb_encode_resolve_request(principal, &request, &request_size) &&
+      etb_send_request(seed_endpoint, request, request_size, &bundles, &routes,
+                       endpoint_out, endpoint_out_size, error, error_size) &&
+      etb_registry_merge_and_save(context->registry_path, &routes)) {
+    ok = endpoint_out[0] != '\0';
+  }
+  free(request);
+  etb_bundle_list_free(&bundles);
+  etb_peer_route_map_free(&routes);
+  return ok;
+}
+
+static const char *etb_resolve_known_endpoint(const etb_node_context *context,
+                                              const char *principal,
+                                              etb_peer_route_map *snapshot) {
+  const char *endpoint = etb_peer_route_map_lookup(context->peers, principal);
+  etb_peer_route_map_init(snapshot);
+  if (endpoint != NULL) {
+    return endpoint;
+  }
+  if (!etb_registry_snapshot(context, snapshot)) {
+    return NULL;
+  }
+  return etb_peer_route_map_lookup(snapshot, principal);
+}
+
+static bool etb_resolve_discovery_endpoint(const etb_node_context *context,
+                                           const char *principal,
+                                           char *endpoint_out,
+                                           size_t endpoint_out_size,
+                                           char *error,
+                                           size_t error_size) {
+  etb_peer_route_map snapshot;
+  const char *known;
+  size_t seed_index;
+  endpoint_out[0] = '\0';
+  known = etb_resolve_known_endpoint(context, principal, &snapshot);
+  if (known != NULL) {
+    snprintf(endpoint_out, endpoint_out_size, "%s", known);
+    etb_peer_route_map_free(&snapshot);
+    return true;
+  }
+  etb_peer_route_map_free(&snapshot);
+  for (seed_index = 0U; seed_index < context->seeds->count; ++seed_index) {
+    char resolved[256];
+    resolved[0] = '\0';
+    if (etb_discovery_resolve_with_seed(context, context->seeds->items[seed_index],
+                                        principal, resolved, sizeof(resolved),
+                                        error, error_size)) {
+      snprintf(endpoint_out, endpoint_out_size, "%s", resolved);
+      return true;
+    }
+  }
+  snprintf(error, error_size, "no route for principal '%s'", principal);
+  return false;
 }
 
 static bool etb_program_has_derivation_for_goal(const etb_program *program,
@@ -918,6 +1551,7 @@ static bool etb_resolve_clause_dependencies(const etb_node_context *context,
     etb_atom instantiated;
     etb_fact_list answers;
     char *remote_query = NULL;
+    char resolved_endpoint[256];
     const char *endpoint;
     if (literal->negated || etb_literal_is_capability(engine, literal)) {
       continue;
@@ -927,10 +1561,19 @@ static bool etb_resolve_clause_dependencies(const etb_node_context *context,
       snprintf(error, error_size, "failed to instantiate dependency");
       return false;
     }
-    endpoint = instantiated.kind == ETB_ATOM_SAYS
-                   ? etb_peer_route_map_lookup(context->peers,
-                                               instantiated.principal)
-                   : NULL;
+    resolved_endpoint[0] = '\0';
+    endpoint = NULL;
+    if (instantiated.kind == ETB_ATOM_SAYS &&
+        etb_resolve_discovery_endpoint(context, instantiated.principal,
+                                       resolved_endpoint,
+                                       sizeof(resolved_endpoint), error,
+                                       error_size)) {
+      endpoint = resolved_endpoint;
+    } else if (instantiated.kind == ETB_ATOM_SAYS) {
+      etb_atom_free(&instantiated);
+      etb_binding_set_free(&bindings);
+      return false;
+    }
     if (endpoint != NULL) {
       etb_bundle_list remote_bundles;
       etb_bundle_list_init(&remote_bundles);
@@ -1186,53 +1829,101 @@ static bool etb_execute_query(const etb_node_context *context,
 bool etb_remote_query(const char *endpoint, const char *query_text,
                       etb_bundle_list *bundles, char *error,
                       size_t error_size) {
-  int fd = -1;
+  etb_node_context context;
   unsigned char *request = NULL;
   size_t request_size = 0U;
-  unsigned char *response = NULL;
-  size_t response_size = 0U;
-  if (!etb_connect_endpoint(endpoint, &fd, error, error_size) ||
-      !etb_encode_query_request(query_text, &request, &request_size) ||
-      !etb_send_message(fd, request, request_size) ||
-      !etb_recv_message(fd, &response, &response_size) ||
-      !etb_decode_response(response, response_size, bundles, error, error_size)) {
+  etb_peer_route_map routes;
+  char resolved[8];
+  memset(&context, 0, sizeof(context));
+  etb_peer_route_map_init(&context.local_routes);
+  context.node_id = "etbctl";
+  context.listen_endpoint = "";
+  if (!etb_encode_query_request(&context, query_text, &request, &request_size) ||
+      !etb_send_request(endpoint, request, request_size, bundles, &routes,
+                        resolved, sizeof(resolved), error, error_size)) {
     free(request);
-    free(response);
-    if (fd >= 0) {
-      close(fd);
-    }
+    etb_peer_route_map_free(&routes);
+    etb_peer_route_map_free(&context.local_routes);
     return false;
   }
   free(request);
-  free(response);
-  close(fd);
+  etb_peer_route_map_free(&routes);
+  etb_peer_route_map_free(&context.local_routes);
   return true;
 }
 
 static bool etb_handle_client(int client_fd, const etb_node_context *context) {
   unsigned char *request = NULL;
   size_t request_size = 0U;
-  char *query_text = NULL;
   unsigned char *response = NULL;
   size_t response_size = 0U;
   char error[256];
   etb_bundle_list bundles;
+  etb_peer_route_map routes;
+  etb_request decoded;
+  char resolved_endpoint[256];
   bool ok = false;
 
   memset(error, 0, sizeof(error));
   etb_bundle_list_init(&bundles);
+  etb_peer_route_map_init(&routes);
+  etb_request_init(&decoded);
+  resolved_endpoint[0] = '\0';
   if (!etb_recv_message(client_fd, &request, &request_size) ||
-      !etb_decode_query_request(request, request_size, &query_text, error,
-                                sizeof(error))) {
+      !etb_decode_request(request, request_size, &decoded, error,
+                          sizeof(error))) {
     (void)etb_response_encode_error(error[0] == '\0' ? "invalid request" : error,
                                     &response, &response_size);
     goto done;
   }
-  if (!etb_execute_query(context, query_text, &bundles, error, sizeof(error))) {
-    (void)etb_response_encode_error(error, &response, &response_size);
+  if ((decoded.routes.count > 0U ||
+       (decoded.node_id != NULL && decoded.endpoint != NULL)) &&
+      !etb_registry_ingest(context, &decoded)) {
+    (void)etb_response_encode_error("failed to update registry", &response,
+                                    &response_size);
     goto done;
   }
-  if (!etb_response_encode_ok(&bundles, &response, &response_size)) {
+  if (strcmp(decoded.op, "query") == 0) {
+    if (decoded.query_text == NULL ||
+        !etb_execute_query(context, decoded.query_text, &bundles, error,
+                           sizeof(error))) {
+      (void)etb_response_encode_error(error, &response, &response_size);
+      goto done;
+    }
+    if (!etb_registry_snapshot(context, &routes)) {
+      (void)etb_response_encode_error("failed to read registry", &response,
+                                      &response_size);
+      goto done;
+    }
+  } else if (strcmp(decoded.op, "announce") == 0 ||
+             strcmp(decoded.op, "registry") == 0) {
+    if (!etb_registry_snapshot(context, &routes)) {
+      (void)etb_response_encode_error("failed to read registry", &response,
+                                      &response_size);
+      goto done;
+    }
+  } else if (strcmp(decoded.op, "resolve") == 0) {
+    if (!etb_registry_snapshot(context, &routes)) {
+      (void)etb_response_encode_error("failed to read registry", &response,
+                                      &response_size);
+      goto done;
+    }
+    if (decoded.principal != NULL) {
+      const char *match = etb_peer_route_map_lookup(&routes, decoded.principal);
+      if (match != NULL) {
+        snprintf(resolved_endpoint, sizeof(resolved_endpoint), "%s", match);
+      }
+    }
+  } else {
+    (void)etb_response_encode_error("unsupported request", &response,
+                                    &response_size);
+    goto done;
+  }
+  if (!etb_response_encode_ok(&bundles, &routes,
+                              resolved_endpoint[0] == '\0'
+                                  ? NULL
+                                  : resolved_endpoint,
+                              &response, &response_size)) {
     (void)etb_response_encode_error("failed to encode response", &response,
                                     &response_size);
     goto done;
@@ -1244,29 +1935,80 @@ done:
     (void)etb_send_message(client_fd, response, response_size);
   }
   free(response);
-  free(query_text);
   free(request);
+  etb_request_free(&decoded);
   etb_bundle_list_free(&bundles);
+  etb_peer_route_map_free(&routes);
   return ok;
+}
+
+static void etb_discovery_announce_loop(const etb_node_context *context) {
+  for (;;) {
+    size_t index;
+    for (index = 0U; index < context->seeds->count; ++index) {
+      char error[256];
+      memset(error, 0, sizeof(error));
+      (void)etb_discovery_sync_with_seed(context, context->seeds->items[index],
+                                         error, sizeof(error));
+      (void)etb_discovery_pull_from_seed(context, context->seeds->items[index],
+                                         error, sizeof(error));
+    }
+    sleep(1);
+  }
 }
 
 bool etb_node_serve(const char *node_id, const char *program_path,
                     const char *listen_endpoint,
                     const etb_peer_route_map *peers,
+                    const etb_endpoint_list *seeds,
                     const char *prover_path, char *error,
                     size_t error_size) {
   int listen_fd;
   etb_node_context context;
+  etb_peer_route_map initial_routes;
+  pid_t announcer_pid;
+  char safe_name[128];
   memset(&context, 0, sizeof(context));
   context.node_id = node_id;
   context.program_path = program_path;
+  context.listen_endpoint = listen_endpoint;
   context.peers = peers;
+  context.seeds = seeds;
   context.prover_path = prover_path;
+  etb_peer_route_map_init(&context.local_routes);
+  etb_sanitize_name(node_id, safe_name, sizeof(safe_name));
+  snprintf(context.registry_path, sizeof(context.registry_path),
+           "/tmp/etb-registry-%s.txt", safe_name);
+  if (!etb_collect_local_routes(program_path, listen_endpoint, node_id,
+                                &context.local_routes, error, error_size)) {
+    etb_peer_route_map_free(&context.local_routes);
+    return false;
+  }
+  etb_peer_route_map_init(&initial_routes);
+  if (!etb_peer_route_map_merge(&initial_routes, &context.local_routes) ||
+      !etb_peer_route_map_merge(&initial_routes, peers) ||
+      !etb_registry_save(context.registry_path, &initial_routes)) {
+    etb_peer_route_map_free(&initial_routes);
+    etb_peer_route_map_free(&context.local_routes);
+    snprintf(error, error_size, "failed to initialize registry");
+    return false;
+  }
+  etb_peer_route_map_free(&initial_routes);
 
   if (!etb_listen_endpoint(listen_endpoint, &listen_fd, error, error_size)) {
+    etb_peer_route_map_free(&context.local_routes);
     return false;
   }
   (void)signal(SIGCHLD, SIG_IGN);
+  announcer_pid = -1;
+  if (seeds != NULL && seeds->count > 0U) {
+    announcer_pid = fork();
+    if (announcer_pid == 0) {
+      close(listen_fd);
+      etb_discovery_announce_loop(&context);
+      _exit(0);
+    }
+  }
   printf("etbd[%s] listening on %s\n", node_id, listen_endpoint);
   fflush(stdout);
   for (;;) {

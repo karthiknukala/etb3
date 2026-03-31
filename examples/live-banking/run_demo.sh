@@ -66,11 +66,12 @@ cleanup() {
 trap cleanup EXIT
 
 rm -rf "$CHAIN_DIR"
+rm -f /tmp/etb-registry-customer.txt /tmp/etb-registry-teller.txt
 
 "$BUILD_DIR/etbd" serve "$ROOT_DIR/examples/live-banking/customer_node.etb" \
   --node-id customer \
   --listen 127.0.0.1:7601 \
-  --peer teller=127.0.0.1:7602 \
+  --seed 127.0.0.1:7602 \
   --prover "$PROVER" \
   >"$TMP_DIR/customer.log" 2>&1 &
 customer_pid=$!
@@ -78,12 +79,12 @@ customer_pid=$!
 "$BUILD_DIR/etbd" serve "$ROOT_DIR/examples/live-banking/teller_node.etb" \
   --node-id teller \
   --listen 127.0.0.1:7602 \
-  --peer customer=127.0.0.1:7601 \
+  --seed 127.0.0.1:7601 \
   --prover "$PROVER" \
   >"$TMP_DIR/teller.log" 2>&1 &
 teller_pid=$!
 
-sleep 1
+sleep 2
 
 "$BUILD_DIR/etbctl" query 127.0.0.1:7601 'cash_authorized(tx1001,alice,50)' \
   --cert-out "$TOP_CERT" \

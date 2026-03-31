@@ -4,3 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+curve25519-dalek = { version = "4", features = ["rand_core"] }
+rand = "0.8"
+sha2 = "0.10"

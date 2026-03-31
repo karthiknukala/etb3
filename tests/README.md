@@ -29,6 +29,16 @@ Run one integration script directly:
 /bin/zsh tests/integration/two_node_banking.sh "$PWD" "$PWD/build"
 ```
 
+Run the live discovery integrations directly:
+
+```sh
+/bin/zsh tests/integration/live_seed_banking.sh "$PWD" "$PWD/build"
+```
+
+```sh
+/bin/zsh tests/integration/live_seed_visa.sh "$PWD" "$PWD/build"
+```
+
 ## Adding a C Test
 
 1. Add a new `static void test_name(void)` function to
@@ -61,6 +71,7 @@ Good fits for this layer:
 Good fits for this layer:
 
 - multi-node certificate exchange
+- seed-based service discovery
 - proof generation and verification
 - subprocess adapter workflows
 - CLI regression tests
@@ -72,4 +83,4 @@ Good fits for this layer:
 - When you add a new adapter, add a small unit-style capability test first, then
   an end-to-end shell test if the adapter matters to a workflow.
 - If a test depends on the proof sidecar, document that it exercises the current
-  prototype proof bundle flow rather than a production cryptographic prover.
+  proof relation and what statement is actually being verified.

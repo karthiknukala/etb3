@@ -66,20 +66,12 @@ cleanup() {
 trap cleanup EXIT
 
 rm -rf "$CHAIN_DIR"
-
-"$BUILD_DIR/etbd" serve "$ROOT_DIR/examples/live-visa/client.etb" \
-  --node-id client \
-  --listen 127.0.0.1:7701 \
-  --peer authority=127.0.0.1:7702 \
-  --prover "$PROVER" \
-  >"$TMP_DIR/client.log" 2>&1 &
-client_pid=$!
+rm -f /tmp/etb-registry-client.txt /tmp/etb-registry-authority.txt \
+  /tmp/etb-registry-payment.txt /tmp/etb-registry-visa.txt
 
 "$BUILD_DIR/etbd" serve "$ROOT_DIR/examples/live-visa/authority.etb" \
   --node-id authority \
   --listen 127.0.0.1:7702 \
-  --peer payment=127.0.0.1:7703 \
-  --peer visa=127.0.0.1:7704 \
   --prover "$PROVER" \
   >"$TMP_DIR/authority.log" 2>&1 &
 authority_pid=$!
@@ -87,6 +79,7 @@ authority_pid=$!
 "$BUILD_DIR/etbd" serve "$ROOT_DIR/examples/live-visa/payment.etb" \
   --node-id payment \
   --listen 127.0.0.1:7703 \
+  --seed 127.0.0.1:7702 \
   --prover "$PROVER" \
   >"$TMP_DIR/payment.log" 2>&1 &
 payment_pid=$!
@@ -94,11 +87,20 @@ payment_pid=$!
 "$BUILD_DIR/etbd" serve "$ROOT_DIR/examples/live-visa/visa.etb" \
   --node-id visa \
   --listen 127.0.0.1:7704 \
+  --seed 127.0.0.1:7702 \
   --prover "$PROVER" \
   >"$TMP_DIR/visa.log" 2>&1 &
 visa_pid=$!
 
-sleep 1
+"$BUILD_DIR/etbd" serve "$ROOT_DIR/examples/live-visa/client.etb" \
+  --node-id client \
+  --listen 127.0.0.1:7701 \
+  --seed 127.0.0.1:7702 \
+  --prover "$PROVER" \
+  >"$TMP_DIR/client.log" 2>&1 &
+client_pid=$!
+
+sleep 2
 
 "$BUILD_DIR/etbctl" query 127.0.0.1:7701 'trip_ready(alice)' \
   --cert-out "$TOP_CERT" \

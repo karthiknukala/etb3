@@ -69,8 +69,10 @@ int main(int argc, char **argv) {
   size_t import_count = 0U;
   int verify_proof = 0;
   etb_peer_route_map peers;
+  etb_endpoint_list seeds;
 
   etb_peer_route_map_init(&peers);
+  etb_endpoint_list_init(&seeds);
   if (argc >= 2 && strcmp(argv[1], "serve") == 0) {
     const char *node_id = "node";
     const char *listen_endpoint = NULL;
@@ -79,9 +81,11 @@ int main(int argc, char **argv) {
     if (argc < 5) {
       fprintf(stderr,
               "usage: %s serve PROGRAM --node-id ID --listen HOST:PORT "
-              "[--peer PRINCIPAL=HOST:PORT ...] [--prover PATH]\n",
+              "[--peer PRINCIPAL=HOST:PORT ...] [--seed HOST:PORT ...] "
+              "[--prover PATH]\n",
               argv[0]);
       etb_peer_route_map_free(&peers);
+      etb_endpoint_list_free(&seeds);
       return 1;
     }
     serve_program = argv[2];
@@ -97,6 +101,15 @@ int main(int argc, char **argv) {
         if (!add_peer_spec(&peers, argv[++index])) {
           fprintf(stderr, "etbd: invalid --peer '%s'\n", argv[index]);
           etb_peer_route_map_free(&peers);
+          etb_endpoint_list_free(&seeds);
+          return 1;
+        }
+      } else if (strcmp(argv[index], "--seed") == 0 &&
+                 index + 1U < (size_t)argc) {
+        if (!etb_endpoint_list_add(&seeds, argv[++index])) {
+          fprintf(stderr, "etbd: invalid --seed '%s'\n", argv[index]);
+          etb_peer_route_map_free(&peers);
+          etb_endpoint_list_free(&seeds);
           return 1;
         }
       } else if (strcmp(argv[index], "--prover") == 0 &&
@@ -105,22 +118,26 @@ int main(int argc, char **argv) {
       } else {
         fprintf(stderr, "etbd: unknown or incomplete option '%s'\n", argv[index]);
         etb_peer_route_map_free(&peers);
+        etb_endpoint_list_free(&seeds);
         return 1;
       }
     }
     if (listen_endpoint == NULL) {
       fprintf(stderr, "etbd: serve mode requires --listen HOST:PORT\n");
       etb_peer_route_map_free(&peers);
+      etb_endpoint_list_free(&seeds);
       return 1;
     }
     memset(error, 0, sizeof(error));
-    if (!etb_node_serve(node_id, serve_program, listen_endpoint, &peers,
+    if (!etb_node_serve(node_id, serve_program, listen_endpoint, &peers, &seeds,
                         serve_prover, error, sizeof(error))) {
       fprintf(stderr, "etbd: %s\n", error);
       etb_peer_route_map_free(&peers);
+      etb_endpoint_list_free(&seeds);
       return 1;
     }
     etb_peer_route_map_free(&peers);
+    etb_endpoint_list_free(&seeds);
     return 0;
   }
 
@@ -130,6 +147,7 @@ int main(int argc, char **argv) {
             "[--proof-out FILE] [--prover PATH] [--verify-proof]\n",
             argv[0]);
     etb_peer_route_map_free(&peers);
+    etb_endpoint_list_free(&seeds);
     return 1;
   }
   program_path = argv[1];
@@ -151,12 +169,14 @@ int main(int argc, char **argv) {
     } else {
       fprintf(stderr, "etbd: unknown or incomplete option '%s'\n", argv[index]);
       etb_peer_route_map_free(&peers);
+      etb_endpoint_list_free(&seeds);
       return 1;
     }
   }
   if (proof_out != NULL && cert_out == NULL) {
     fprintf(stderr, "etbd: --proof-out requires --cert-out\n");
     etb_peer_route_map_free(&peers);
+    etb_endpoint_list_free(&seeds);
     return 1;
   }
   memset(error, 0, sizeof(error));
@@ -166,12 +186,14 @@ int main(int argc, char **argv) {
                                          sizeof(error))) {
     fprintf(stderr, "etbd: %s\n", error);
     etb_peer_route_map_free(&peers);
+    etb_endpoint_list_free(&seeds);
     return 1;
   }
   if (cert_out != NULL &&
       !etb_certificate_write_file(&certificate, cert_out, error, sizeof(error))) {
     fprintf(stderr, "etbd: %s\n", error);
     etb_peer_route_map_free(&peers);
+    etb_endpoint_list_free(&seeds);
     return 1;
   }
   if (proof_out != NULL &&
@@ -179,6 +201,7 @@ int main(int argc, char **argv) {
                   sizeof(error))) {
     fprintf(stderr, "etbd: %s\n", error);
     etb_peer_route_map_free(&peers);
+    etb_endpoint_list_free(&seeds);
     return 1;
   }
   if (verify_proof && proof_out != NULL &&
@@ -186,6 +209,7 @@ int main(int argc, char **argv) {
                   sizeof(error))) {
     fprintf(stderr, "etbd: %s\n", error);
     etb_peer_route_map_free(&peers);
+    etb_endpoint_list_free(&seeds);
     return 1;
   }
   printf("root=%s\n", certificate.root_digest);
@@ -204,5 +228,6 @@ int main(int argc, char **argv) {
     printf("proof=%s\n", proof_out);
   }
   etb_peer_route_map_free(&peers);
+  etb_endpoint_list_free(&seeds);
   return 0;
 }

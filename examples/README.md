@@ -184,8 +184,9 @@ with the sidecar:
   /tmp/delegation.proof
 ```
 
-The current sidecar is still a deterministic prototype proof bundle verifier,
-not a production cryptographic ZK prover.
+The current backend is `ristretto-pedersen-opening-v1`. It is a real
+cryptographic proof/verifier flow bound to the certificate bytes, but it does
+not yet prove the full ETB derivation trace.
 
 ## 7. Live Distributed Banking
 
@@ -200,6 +201,8 @@ This is the first real live-network example. Two nodes stay up on ports:
 - the customer node holds the withdrawal request and asks the teller for approval
 - the teller node calls back to the customer node for `customer says withdrawal_request(...)`
 - the final client-visible result is produced by querying the customer node
+- the nodes discover each other through seed bootstrap and route exchange rather
+  than explicit principal-specific `--peer` wiring
 
 Start the nodes in separate terminals:
 
@@ -207,7 +210,7 @@ Start the nodes in separate terminals:
 ./build/etbd serve examples/live-banking/customer_node.etb \
   --node-id customer \
   --listen 127.0.0.1:7601 \
-  --peer teller=127.0.0.1:7602 \
+  --seed 127.0.0.1:7602 \
   --prover ./adapters/zk-trace-check/target/debug/zk-trace-check
 ```
 
@@ -215,7 +218,7 @@ Start the nodes in separate terminals:
 ./build/etbd serve examples/live-banking/teller_node.etb \
   --node-id teller \
   --listen 127.0.0.1:7602 \
-  --peer customer=127.0.0.1:7601 \
+  --seed 127.0.0.1:7601 \
   --prover ./adapters/zk-trace-check/target/debug/zk-trace-check
 ```
 
@@ -275,23 +278,15 @@ This is the coalesced four-node example you asked for:
 - authority node queries the payment node and the visa node
 - all nodes stay alive on ports and can answer new queries
 - the final response includes a proof chain for every hop
+- authority learns about the delegate services through seed-based registry
+  exchange rather than hard-coded `--peer` routes
 
 Start the four nodes in separate terminals:
-
-```sh
-./build/etbd serve examples/live-visa/client.etb \
-  --node-id client \
-  --listen 127.0.0.1:7701 \
-  --peer authority=127.0.0.1:7702 \
-  --prover ./adapters/zk-trace-check/target/debug/zk-trace-check
-```
 
 ```sh
 ./build/etbd serve examples/live-visa/authority.etb \
   --node-id authority \
   --listen 127.0.0.1:7702 \
-  --peer payment=127.0.0.1:7703 \
-  --peer visa=127.0.0.1:7704 \
   --prover ./adapters/zk-trace-check/target/debug/zk-trace-check
 ```
 
@@ -299,6 +294,7 @@ Start the four nodes in separate terminals:
 ./build/etbd serve examples/live-visa/payment.etb \
   --node-id payment \
   --listen 127.0.0.1:7703 \
+  --seed 127.0.0.1:7702 \
   --prover ./adapters/zk-trace-check/target/debug/zk-trace-check
 ```
 
@@ -306,6 +302,15 @@ Start the four nodes in separate terminals:
 ./build/etbd serve examples/live-visa/visa.etb \
   --node-id visa \
   --listen 127.0.0.1:7704 \
+  --seed 127.0.0.1:7702 \
+  --prover ./adapters/zk-trace-check/target/debug/zk-trace-check
+```
+
+```sh
+./build/etbd serve examples/live-visa/client.etb \
+  --node-id client \
+  --listen 127.0.0.1:7701 \
+  --seed 127.0.0.1:7702 \
   --prover ./adapters/zk-trace-check/target/debug/zk-trace-check
 ```
 
@@ -354,8 +359,11 @@ That directory will contain:
 
 ## Notes On The Live Mode
 
-- Live nodes currently use static `--peer PRINCIPAL=HOST:PORT` routing.
+- Live nodes now support seed-based route discovery with `--seed HOST:PORT`.
+- `--peer PRINCIPAL=HOST:PORT` still works as a manual override when you want
+  to pin a route.
 - They automatically verify incoming proof bundles before importing answers
   when you configure `--prover`.
-- The transport is plain TCP in this prototype. TLS and gossip discovery are
-  still future work.
+- The transport is still plain TCP in this prototype.
+- Route exchange is best-effort and unsigned. TLS, signed discovery, and real
+  liveness tracking are still future work.

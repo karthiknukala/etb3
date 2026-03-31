@@ -86,4 +86,12 @@ if(BUILD_TESTING)
     NAME etb_two_node_banking
     COMMAND /bin/zsh ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/two_node_banking.sh
             ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+  add_test(
+    NAME etb_live_seed_banking
+    COMMAND /bin/zsh ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/live_seed_banking.sh
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+  add_test(
+    NAME etb_live_seed_visa
+    COMMAND /bin/zsh ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/live_seed_visa.sh
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 endif()

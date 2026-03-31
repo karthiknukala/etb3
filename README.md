@@ -7,9 +7,9 @@ Peer-to-peer Evidential Tool Bus prototype in C11 with:
 - `speaks_for`
 - interpreted predicates via subprocess adapters
 - deterministic trace and certificate export
-- SWIM-style membership scaffolding
+- seed-based service discovery and route exchange
 - snapshot/signer scaffolding
-- Rust ZK sidecar skeleton
+- Rust proof sidecar
 
 ## What Is Distributed Today
 
@@ -18,10 +18,14 @@ The repo now has a live distributed mode built around long-running TCP nodes:
 - `etbd serve ... --listen HOST:PORT` starts a node that stays alive and answers
   remote proof queries
 - `etbctl query HOST:PORT 'goal(...)'` queries a live node over localhost/TCP
-- nodes can be configured with `--peer PRINCIPAL=HOST:PORT`
+- nodes can bootstrap with `--seed HOST:PORT`
+- nodes exchange route snapshots during announces, queries, and registry fetches
 - when a clause body contains a remote `K says A`, the node can automatically
-  query the peer registered for principal `K`, verify the returned proof bundle,
-  import the certificate answers, and continue deriving the local result
+  resolve a live endpoint for principal `K`, query that peer, verify the
+  returned proof bundle, import the certificate answers, and continue deriving
+  the local result
+- explicit `--peer PRINCIPAL=HOST:PORT` routing is still supported as a manual
+  override, but the examples no longer require it
 
 That is what makes the current prototype distributed: proofs and claims can be
 resolved by live nodes over the network instead of exchanging certificate files
@@ -29,13 +33,14 @@ manually.
 
 What is still not finished:
 
-- gossip discovery
-- heartbeat-based liveness
+- signed discovery records
+- heartbeat-based liveness and failure detection
 - TLS transport
-- automatic cluster membership propagation
+- stronger membership semantics than best-effort route propagation
 
-So the live mode is real distributed query execution with static routing, not
-yet the full discovery/heartbeat system from the long-term plan.
+So the live mode is real distributed query execution with seed-based discovery
+and route propagation, but not yet the full signed heartbeat/TLS system from
+the long-term plan.
 
 ## Build
 
@@ -71,10 +76,30 @@ Run just the two-node banking integration test:
 ctest --test-dir build -R etb_two_node_banking --output-on-failure
 ```
 
+Run the live discovery banking and visa integrations:
+
+```sh
+ctest --test-dir build -R etb_live_seed_banking --output-on-failure
+```
+
+```sh
+ctest --test-dir build -R etb_live_seed_visa --output-on-failure
+```
+
 Run the banking integration script yourself:
 
 ```sh
 /bin/zsh tests/integration/two_node_banking.sh "$PWD" "$PWD/build"
+```
+
+Run the live discovery integrations yourself:
+
+```sh
+/bin/zsh tests/integration/live_seed_banking.sh "$PWD" "$PWD/build"
+```
+
+```sh
+/bin/zsh tests/integration/live_seed_visa.sh "$PWD" "$PWD/build"
 ```
 
 The integration script assumes:
@@ -144,9 +169,12 @@ There is a more detailed test-writing note in
 ./build/etbd serve path/to/program.etb \
   --node-id my-node \
   --listen 127.0.0.1:7601 \
-  --peer other_principal=127.0.0.1:7602 \
+  --seed 127.0.0.1:7602 \
   --prover ./adapters/zk-trace-check/target/debug/zk-trace-check
 ```
+
+You can still pin a manual route with `--peer PRINCIPAL=HOST:PORT`, but the
+seed-based discovery path is the preferred way to launch the live examples.
 
 Query a live node:
 
@@ -164,20 +192,26 @@ Query a live node:
 - `sample_concat`: deterministic capability returning a concatenated string
 - `sample_receipt`: evidence-producing capability returning a digest receipt
 
-## ZK Sidecar
+## Proof Sidecar
 
 The Rust sidecar lives in [`adapters/zk-trace-check`](adapters/zk-trace-check) and
-currently provides deterministic placeholder commands for:
+currently provides commands for:
 
 - `segment-prove`
 - `fold`
 - `prove`
 - `verify`
 
-`prove` emits the current full proof bundle for a certificate, and `verify`
-checks that proof bundle against the certificate. This is the current prototype
-proof flow for zk-ETB; the sidecar is still a deterministic placeholder rather
-than a production cryptographic prover.
+`prove` emits a proof bundle for a certificate, and `verify` checks that proof
+bundle against the certificate. The current backend is
+`ristretto-pedersen-opening-v1`: it hashes the certificate with SHA-256, binds
+that hash into a Pedersen-style commitment on the Ristretto group, and proves
+knowledge of the opening with a Schnorr-style non-interactive proof.
+
+That means the backend is now a real cryptographic proof/verifier flow, not the
+old deterministic placeholder. It still does not prove full ETB derivation
+semantics yet. The statement being proved today is a certificate-bound opening
+relation, not the eventual trace-check circuit from the long-term plan.
 
 ## Example Suite
 
@@ -245,14 +279,17 @@ You can also verify either proof bundle directly:
   /tmp/customer.proof
 ```
 
-The same flow is exercised automatically by the integration test
-`etb_two_node_banking`.
+The same file-based flow is exercised automatically by the integration test
+`etb_two_node_banking`, while the live discovery flow is exercised by
+`etb_live_seed_banking`.
 
 ## Current Limits
 
-- The proof sidecar produces a deterministic prototype proof bundle, not a
-  production cryptographic ZK proof yet.
-- The multi-node examples currently model distributed exchange by importing
-  certificate files between separate `etbd` invocations.
-- The peer membership, TLS, and registry layers are scaffolded, not production
+- The proof sidecar now uses a real cryptographic proof relation, but it still
+  is not the final trace-checking ZK proof for ETB derivations.
+- The file-based multi-node examples still model distributed exchange by
+  importing certificate files between separate `etbd` invocations.
+- The live node discovery protocol is seed-based and best-effort. It does not
+  yet provide signed heartbeats, revocation, or transport security.
+- The peer membership, TLS, and registry layers are still not production
   complete.

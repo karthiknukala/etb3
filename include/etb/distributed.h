@@ -15,6 +15,12 @@ typedef struct etb_peer_route_map {
   size_t capacity;
 } etb_peer_route_map;
 
+typedef struct etb_endpoint_list {
+  char **items;
+  size_t count;
+  size_t capacity;
+} etb_endpoint_list;
+
 typedef struct etb_bundle {
   char *node_id;
   char *query_text;
@@ -36,6 +42,12 @@ bool etb_peer_route_map_add(etb_peer_route_map *map, const char *principal,
                             const char *endpoint);
 const char *etb_peer_route_map_lookup(const etb_peer_route_map *map,
                                       const char *principal);
+bool etb_peer_route_map_merge(etb_peer_route_map *dst,
+                              const etb_peer_route_map *src);
+
+void etb_endpoint_list_init(etb_endpoint_list *list);
+void etb_endpoint_list_free(etb_endpoint_list *list);
+bool etb_endpoint_list_add(etb_endpoint_list *list, const char *endpoint);
 
 void etb_bundle_list_init(etb_bundle_list *list);
 void etb_bundle_list_free(etb_bundle_list *list);
@@ -51,6 +63,7 @@ bool etb_bundle_list_append_unique(etb_bundle_list *dst,
 bool etb_node_serve(const char *node_id, const char *program_path,
                     const char *listen_endpoint,
                     const etb_peer_route_map *peers,
+                    const etb_endpoint_list *seeds,
                     const char *prover_path, char *error,
                     size_t error_size);
 
